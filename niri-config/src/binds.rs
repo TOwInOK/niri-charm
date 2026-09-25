@@ -121,6 +121,8 @@ pub enum Action {
     },
     #[knuffel(skip)]
     CancelScreenshot,
+    ScreenshotUndo,
+    ScreenshotRedo,
     #[knuffel(skip)]
     ScreenshotTogglePointer,
     Screenshot(
@@ -502,6 +504,8 @@ impl From<niri_ipc::Action> for Action {
                 show_pointer,
                 path,
             },
+            niri_ipc::Action::ScreenshotUndo {} => Self::ScreenshotUndo,
+            niri_ipc::Action::ScreenshotRedo {} => Self::ScreenshotRedo,
             niri_ipc::Action::ToggleKeyboardShortcutsInhibit {} => {
                 Self::ToggleKeyboardShortcutsInhibit
             }
@@ -1212,6 +1216,22 @@ mod tests {
                 modifiers: Modifiers::ISO_LEVEL5_SHIFT
             },
         );
+    }
+
+    #[test]
+    fn parse_screenshot_editor_actions() {
+        let config = crate::Config::parse_mem(
+            r#"
+            binds {
+                Mod+Z { screenshot-undo; }
+                Mod+Shift+Z { screenshot-redo; }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let actions: Vec<&Action> = config.binds.0.iter().map(|bind| &bind.action).collect();
+        assert_eq!(actions, [&Action::ScreenshotUndo, &Action::ScreenshotRedo]);
     }
 
     #[test]

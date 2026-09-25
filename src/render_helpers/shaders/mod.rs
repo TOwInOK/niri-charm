@@ -13,6 +13,7 @@ use crate::render_helpers::blur::BlurProgram;
 pub struct Shaders {
     pub border: Option<ShaderProgram>,
     pub shadow: Option<ShaderProgram>,
+    pub screenshot_magnifier: Option<ShaderProgram>,
     pub clipped_surface: Option<GlesTexProgram>,
     pub postprocess_and_clip: Option<GlesTexProgram>,
     pub resize: Option<ShaderProgram>,
@@ -27,6 +28,7 @@ pub struct Shaders {
 pub enum ProgramType {
     Border,
     Shadow,
+    ScreenshotMagnifier,
     Resize,
     Close,
     Open,
@@ -35,6 +37,18 @@ pub enum ProgramType {
 impl Shaders {
     fn compile(renderer: &mut GlesRenderer) -> Self {
         let _span = tracy_client::span!("Shaders::compile");
+
+        let screenshot_magnifier = ShaderProgram::compile(
+            renderer,
+            include_str!("screenshot_magnifier.frag"),
+            &[
+                UniformName::new("source_size", UniformType::_1f),
+                UniformName::new("zoom", UniformType::_1f),
+            ],
+            &["image"],
+        )
+        .map_err(|err| warn!("error compiling screenshot magnifier shader: {err:?}"))
+        .ok();
 
         let border = ShaderProgram::compile(
             renderer,
@@ -159,6 +173,7 @@ impl Shaders {
         Self {
             border,
             shadow,
+            screenshot_magnifier,
             clipped_surface,
             postprocess_and_clip,
             resize,
@@ -208,6 +223,7 @@ impl Shaders {
         match program {
             ProgramType::Border => self.border.clone(),
             ProgramType::Shadow => self.shadow.clone(),
+            ProgramType::ScreenshotMagnifier => self.screenshot_magnifier.clone(),
             ProgramType::Resize => self
                 .custom_resize
                 .borrow()

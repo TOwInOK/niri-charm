@@ -40,6 +40,8 @@ We're striving for polished features in niri, so point out any issues and bugs, 
 - Try to break the feature and check that it behaves well.
 - Where applicable, try different input devices: keyboard, mouse, trackpad, tablet, touchscreen.
 - Watch out for any new performance drops.
+- For screenshot editor and offscreen-rendering changes, also test a native Wayland nested session on the hardware renderer. Verify the presented window, not just an internal screencopy: a correct capture can hide a broken EGL window draw buffer. Exercise opening, editing, and closing the editor; software-rendered X11 tests do not cover this presentation path.
+  Enable renderer diagnostics too (for example, `RUST_LOG=debug`) and check for GL errors throughout the run. A filter such as `RUST_LOG=niri=info` hides Smithay errors even when the displayed image looks correct.
 
 For bug fixes, first make sure you can reproduce the bug, then do the same steps in the PR test build, and verify that the bug is fixed.
 Be similarly thorough: test any similar or related edge cases to verify that the fix doesn't introduce any new problems.

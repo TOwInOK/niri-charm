@@ -13,6 +13,7 @@ mod knit;
 mod layer_shell;
 mod region;
 mod remove_output;
+mod screenshot_editor;
 mod transactions;
 mod virtual_pointer;
 mod window_opening;

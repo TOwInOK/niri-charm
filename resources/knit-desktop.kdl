@@ -1,6 +1,9 @@
 // Run from an existing Wayland session:
-// ./target/release/niri --config resources/knit-desktop.kdl
+// ./target/debug/niri --config resources/knit-desktop.kdl
 // Launches Zed, Obsidian and two blank Ghostty windows as a 2-by-2 grid.
+// Alt+U opens the screenshot editor: V selects, B draws, R blurs, C opens the palette.
+// Alt+Z undoes, Alt+Shift+Z redoes; these binds pass through outside the editor.
+// Enter/Ctrl+S save, Ctrl+C only copies, Space+drag moves the crop, Escape cancels.
 
 prefer-no-csd
 input {
@@ -181,7 +184,9 @@ binds {
 
     Alt+C repeat=false { zoom-lock ; }
 
-    Alt+U     hotkey-overlay-title="Screenshot area"   { screenshot; }
+    Alt+U repeat=false hotkey-overlay-title="Screenshot editor: draw / blur" { screenshot; }
+    Alt+Z repeat=false hotkey-overlay-title="Screenshot: undo" { screenshot-undo; }
+    Alt+Shift+Z repeat=false hotkey-overlay-title="Screenshot: redo" { screenshot-redo; }
 }
 
 zoom {

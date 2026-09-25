@@ -2198,23 +2198,31 @@ impl State {
     }
 
     pub fn confirm_screenshot(&mut self, write_to_disk: bool) {
+        if !self.niri.screenshot_ui.is_open() {
+            return;
+        }
+        let Some(result) = self
+            .backend
+            .with_primary_renderer(|renderer| self.niri.screenshot_ui.capture(renderer))
+        else {
+            return;
+        };
+        let (size, pixels) = match result {
+            Ok(image) => image,
+            Err(err) => {
+                warn!("error capturing screenshot: {err:?}");
+                self.niri.queue_redraw_all();
+                return;
+            }
+        };
         let ScreenshotUi::Open { path, .. } = &mut self.niri.screenshot_ui else {
             return;
         };
         let path = path.take();
-
-        self.backend.with_primary_renderer(|renderer| {
-            match self.niri.screenshot_ui.capture(renderer) {
-                Ok((size, pixels)) => {
-                    if let Err(err) = self.niri.save_screenshot(size, pixels, write_to_disk, path) {
-                        warn!("error saving screenshot: {err:?}");
-                    }
-                }
-                Err(err) => {
-                    warn!("error capturing screenshot: {err:?}");
-                }
-            }
-        });
+        if let Err(err) = self.niri.save_screenshot(size, pixels, write_to_disk, path) {
+            warn!("error saving screenshot: {err:?}");
+            return;
+        }
 
         self.niri.screenshot_ui.close();
         self.niri
@@ -4878,8 +4886,12 @@ impl Niri {
 
         // If the screenshot UI is open, draw it.
         if self.screenshot_ui.is_open() {
-            self.screenshot_ui
-                .render_output(output, ctx.target, &mut |elem| push(elem.into()));
+            self.screenshot_ui.render_output(
+                ctx.renderer.as_gles_renderer(),
+                output,
+                ctx.target,
+                &mut |elem| push(elem.into()),
+            );
 
             // Add the backdrop for outputs that were connected while the screenshot UI was open.
             push(backdrop.into());

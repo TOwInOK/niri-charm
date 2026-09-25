@@ -36,10 +36,17 @@ fn parse(keymap: &Keymap, input: &str) -> Vec<Op> {
 }
 
 fn set_up(config: &str) -> (Fixture, ClientId, WlSurface) {
+    set_up_with(config, |_| Action::TestAction)
+}
+
+fn set_up_with(
+    config: &str,
+    map_action: impl Fn(&Action) -> Action,
+) -> (Fixture, ClientId, WlSurface) {
     let mut config = Config::parse_mem(config).unwrap();
     // knuffel doesn't understand #[cfg(test)]...
     for bind in &mut config.binds.0 {
-        bind.action = Action::TestAction;
+        bind.action = map_action(&bind.action);
     }
 
     let mut f = Fixture::with_config(config);
@@ -405,4 +412,20 @@ fn inhibiting() {
         run_f(&mut f, id, &surface, "-LatQ"),
         @"-AD01  24 XK_q"
     );
+}
+
+#[test]
+fn screenshot_editor_binds_passthrough() {
+    let config = "
+    binds {
+        Ctrl+Z { screenshot-undo; }
+        Ctrl+Shift+Z { screenshot-redo; }
+        Ctrl+Y { screenshot-redo; }
+    }
+    ";
+    let input = "+LCTL +AB01 -AB01 +AD06 -AD06 +LFSH +AB01 -AB01 -LFSH -LCTL";
+    let (mut f, id, surface) = set_up_with(config, Clone::clone);
+    // With the editor closed, a real Wayland client sees exactly the same
+    // presses, releases and modifier transitions as without these bindings.
+    assert_eq!(run_f(&mut f, id, &surface, input), run("", input));
 }

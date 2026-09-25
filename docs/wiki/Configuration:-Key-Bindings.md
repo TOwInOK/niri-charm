@@ -370,6 +370,28 @@ binds {
 
 In the interactive screenshot UI, pressing <kbd>Ctrl</kbd><kbd>C</kbd> will copy the screenshot to the clipboard without writing it to disk.
 
+The screenshot editor freezes each output when opened. Its rectangular, bordered SVG toolbar stays centered at the top in one row, shrinking to fit narrow outputs. Hovering anywhere in a button segment lightens that segment’s background; the active tool uses the accent icon color. The panel is fully opaque at rest and fades to 50% opacity during selection, drawing, blur, and crop-move gestures, returning on release or cancellation. Clicking toolbar controls does not fade the panel. Hover and keyboard focus show shortcut tooltips.
+
+- **Select · V:** drag to select the crop. Existing selection movement and resize binds still work; holding Space or the compositor modifier while dragging moves the crop in any tool. Space no longer saves the screenshot.
+- **Draw · B:** drag a freehand stroke, or click to draw a dot. Strokes are four captured pixels wide. Clicking the brush button selects Draw and toggles its palette; pressing B selects Draw without opening the palette. A horizontal stripe beneath the brush icon shows the current drawing color, including when another tool is selected. It has the same placement as the cursor button’s status stripe.
+- **Blur · R:** drag a rectangle to blur the frozen background. Drawing stays sharp above blur, regardless of operation order. Blur is not a guarantee of secure redaction of sensitive information.
+- **Palette · C:** integrated into the brush button, with no separate toolbar button. Press C while Draw is selected, or click the brush, to open it. Choose one of seven colors with a click or keys 1–7. The selected swatch has a contrasting border and check mark. Choosing a color closes the popover; clicking outside dismisses it without starting a stroke. Existing strokes retain their colors. Enter on the focused brush opens the palette and focuses the current swatch; choosing a color or pressing Escape returns focus to the brush.
+- **Undo / Redo:** navigate the shared history of strokes and blur rectangles across outputs. Ctrl+Z or Alt+Z undo; Ctrl+Shift+Z, Ctrl+Y, or Alt+Shift+Z redo. Unavailable history buttons are dimmed.
+- **Cursor · P:** toggle the captured pointer. The same solid, neutral cursor icon is used in both states; an accent stripe beneath it indicates that the pointer is included.
+- **Copy · Ctrl+C:** copy the crop without writing a file.
+- **Save · Enter / Ctrl+S:** save and copy the crop.
+
+Tab / Shift+Tab move focus among enabled controls; Enter activates a focused control rather than saving unexpectedly. Escape first dismisses an open palette, then cancels an unfinished gesture (restoring the previous crop for selection/movement), and otherwise closes the editor without saving. These editor shortcuts are hardcoded for now and do not change desktop bindings outside the editor. Configured screenshot undo/redo bindings remain supported.
+
+The magnifier previews the frozen image with its edits. Neither the toolbar, magnifier, nor selection decoration is included in the exported image. Edits stay attached to their output pixels when the crop moves. Selection is limited to one output at a time.
+Only the frozen background outside the crop is dimmed. Draw strokes and blur regions keep their full brightness inside and outside the crop; selection borders and controls remain above the edits.
+
+The circular magnifier starts hidden at **1×** each time the editor opens. Scroll up/down to switch between **1×, 2×, 4×, 8×, 16×, and 32×**; scrolling is owned by the editor and does not change desktop zoom. At 4× and above, a one-source-pixel grid helps precise selection. The center pixel is outlined, and the existing crosshair cursor marks the selection hotspot. Magnification uses nearest-neighbor sampling, with no RGB/Hex/coordinate panel. Near output edges the source stays centered on the cursor; the lens moves to the opposite side when space permits.
+At **1×** the magnifier is hidden. Scroll up once to show it again at **2×**; the selection crosshair remains available while the lens is hidden.
+The center pixel's row and column are highlighted across the circular lens. Each band is one source pixel wide and follows the magnification; the center pixel itself retains its original color inside its outline. This overlay is excluded from export.
+
+History lasts until the editor closes. Changing the tool, color, or crop does not add a history entry. A new completed edit clears redo history; undo during a drawing or blur gesture cancels that unfinished edit. If an edit cannot be rendered, the toolbar displays an error message and saving leaves the editor open rather than silently exporting without the effect.
+
 <sup>Since: 25.05</sup> You can hide the mouse pointer in screenshots with the `show-pointer=false` property:
 
 ```kdl
@@ -393,6 +415,21 @@ binds {
     Alt+Print { screenshot-window show-pointer=true; }
 }
 ```
+
+#### `screenshot-undo`, `screenshot-redo`
+
+Undo or redo a stroke or blur rectangle in the screenshot editor. The default editor shortcuts are <kbd>Ctrl</kbd><kbd>Z</kbd> for undo, and <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Z</kbd> or <kbd>Ctrl</kbd><kbd>Y</kbd> for redo.
+
+These actions can also be assigned through the usual binding system:
+
+```kdl
+binds {
+    Ctrl+Z { screenshot-undo; }
+    Ctrl+Shift+Z { screenshot-redo; }
+}
+```
+
+Screenshot-history bindings are active only while the editor is open; outside it, their keys pass through to applications. `screenshot-screen` and `screenshot-window` remain immediate captures without an editing step.
 
 #### `toggle-keyboard-shortcuts-inhibit`
 

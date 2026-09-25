@@ -209,6 +209,9 @@ Output, screencast and screen-capture targets use consistent desktop geometry. P
 
 Nearest elements hide their underlying storage to prevent hardware planes from bypassing the filter. An output-owned `ExtraDamage` commit invalidates the scene when the selected filter changes, including config reload with stationary clients; output and capture damage trackers consume that history independently. Geometry and input mapping are unchanged. This magnifies texture pixels, not an intermediate screenshot of the entire desktop, and does not remove application-rendered antialiasing.
 
+The screenshot editor also uses `SamplingRenderElement` for its circular magnifier (`ScreenshotMagnifier` shader), always selecting nearest independently of desktop zoom configuration. Its pixel grid and center marker are overlay-only; neither changes the frozen frame or export. The editor owns wheel input while open and stores its separate 1×–32× magnifier level for that session (initially hidden at 1×).
+At 1×, magnifier rendering returns before preparing its source texture or emitting overlay elements. Wheel input remains owned by the editor, so increasing to 2× restores the lens without changing desktop zoom.
+
 Session lock renders an unzoomed replacement surface and preserves Zoom state for unlock. Screenshot and MRU UI suspend tracking rather than accumulate hidden follow time. These are not Overview's terminate-session semantics.
 
 The debug overlay is a passive reader: deadzone outline and focal marker, screen-space, output target only. It is hidden during Overview ownership and MRU, and excluded from captures. It must never mutate Zoom state.

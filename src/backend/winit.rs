@@ -8,9 +8,9 @@ use anyhow::Context as _;
 use niri_config::{Config, OutputName};
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::drm::DrmNode;
-use smithay::backend::egl::EGLDevice;
+use smithay::backend::egl::{ffi::egl, wrap_egl_call_bool, EGLDevice};
 use smithay::backend::renderer::damage::OutputDamageTracker;
-use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::gles::{ffi, GlesRenderer};
 use smithay::backend::renderer::{DebugFlags, ImportDma, ImportEgl, Renderer};
 use smithay::backend::winit::{self, WinitEvent, WinitGraphicsBackend};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
@@ -330,11 +330,29 @@ impl Winit {
 
         // Hand them over to winit.
         let res = {
+            let surface = self.backend.egl_surface().get_surface_handle();
             let (renderer, mut framebuffer) = self.backend.bind().unwrap();
             // FIXME: currently impossible to call due to a mutable borrow.
             //
             // let age = self.backend.buffer_age().unwrap();
             let age = 0;
+            // Surfaceless texture preparation can leave framebuffer 0 with GL_NONE
+            // as its draw buffer. Restore the window surface before selecting GL_BACK:
+            // with_context() itself makes the context current without a surface.
+            let display = **renderer.egl_context().display().get_display_handle();
+            let context = renderer.egl_context().get_context_handle();
+            renderer
+                .with_context(|gl| unsafe {
+                    // The backend owns these handles; bind() above has resized the
+                    // native window, and neither handle can change during this call.
+                    wrap_egl_call_bool(|| egl::MakeCurrent(display, surface, surface, context))
+                        .expect("error restoring the EGL window surface");
+                    if gl.DrawBuffers.is_loaded() {
+                        gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+                        gl.DrawBuffers(1, &ffi::BACK);
+                    }
+                })
+                .unwrap();
             self.damage_tracker
                 .render_output(renderer, &mut framebuffer, age, &elements, [0.; 4])
                 .unwrap()

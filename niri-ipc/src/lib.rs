@@ -397,6 +397,14 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set))]
         path: Option<String>,
     },
+    /// Undo the last edit in the screenshot editor.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ScreenshotUndo {},
+    /// Redo the last undone edit in the screenshot editor.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ScreenshotRedo {},
     /// Enable or disable the keyboard shortcuts inhibitor (if any) for the focused surface.
     ToggleKeyboardShortcutsInhibit {},
     /// Close a window.

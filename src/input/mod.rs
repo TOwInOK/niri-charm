@@ -52,6 +52,7 @@ use crate::layout::zoom::{ZoomSnapshot, ZOOM_SNAP_TO_ONE_EPSILON};
 use crate::layout::{ActivateWindow, LayoutElement as _};
 use crate::niri::{CastTarget, PointerVisibility, State};
 use crate::ui::mru::{WindowMru, WindowMruUi};
+use crate::ui::screenshot_editor::EditorOutcome;
 use crate::ui::screenshot_ui::ScreenshotUi;
 use crate::utils::spawning::{spawn, spawn_sh};
 use crate::utils::view::ViewportTransform;
@@ -702,6 +703,19 @@ impl State {
                 if let Some(Keysym::space) = raw {
                     this.niri.screenshot_ui.set_space_down(pressed);
                 }
+                if pressed {
+                    if let Some(raw) = raw {
+                        if let Some(action) = this.niri.screenshot_ui.handle_editor_key(raw, *mods)
+                        {
+                            this.niri.suppressed_keys.insert(key_code);
+                            if let Some(action) = action {
+                                this.do_action(action, false);
+                            }
+                            this.niri.queue_redraw_all();
+                            return FilterResult::Intercept(None);
+                        }
+                    }
+                }
 
                 if this.niri.region_selection.is_some() {
                     if pressed {
@@ -974,6 +988,18 @@ impl State {
             Action::ScreenshotTogglePointer => {
                 self.niri.screenshot_ui.toggle_pointer();
                 self.niri.queue_redraw_all();
+            }
+            Action::ScreenshotUndo => {
+                if self.niri.screenshot_ui.is_open() {
+                    self.niri.screenshot_ui.undo();
+                    self.niri.queue_redraw_all();
+                }
+            }
+            Action::ScreenshotRedo => {
+                if self.niri.screenshot_ui.is_open() {
+                    self.niri.screenshot_ui.redo();
+                    self.niri.queue_redraw_all();
+                }
             }
             Action::Screenshot(show_cursor, path) => {
                 self.open_screenshot_ui(show_cursor, path);
@@ -2829,7 +2855,7 @@ impl State {
 
         let display_pos = self.niri.display_position_for_content(new_pos);
 
-        if let Some(output) = self.niri.screenshot_ui.selection_output() {
+        if let Some(output) = self.niri.screenshot_ui.motion_output() {
             let geom = self.niri.global_space.output_geometry(output).unwrap();
             let point = (display_pos - geom.loc.to_f64())
                 .to_physical(output.current_scale().fractional_scale())
@@ -2972,7 +2998,7 @@ impl State {
 
         let pointer = self.niri.seat.get_pointer().unwrap();
 
-        if let Some(output) = self.niri.screenshot_ui.selection_output() {
+        if let Some(output) = self.niri.screenshot_ui.motion_output() {
             let geom = self.niri.global_space.output_geometry(output).unwrap();
             let point = (location.display - geom.loc.to_f64())
                 .to_physical(output.current_scale().fractional_scale())
@@ -3138,7 +3164,7 @@ impl State {
                     find_configured_bind(bindings, mod_key, trigger, mods)
                 })
                 .filter(|bind| {
-                    !self.niri.screenshot_ui.is_open() || allowed_during_screenshot(&bind.action)
+                    bind_usable_for_screenshot(&bind.action, self.niri.screenshot_ui.is_open())
                 }) {
                     self.niri.suppressed_buttons.insert(button_code);
                     self.handle_bind(
@@ -3392,10 +3418,10 @@ impl State {
                     }
                 }
             } else if let Some(capture) = self.niri.screenshot_ui.pointer_up(None) {
-                if capture {
-                    self.confirm_screenshot(true);
-                } else {
-                    self.niri.queue_redraw_all();
+                match capture {
+                    EditorOutcome::Save => self.confirm_screenshot(true),
+                    EditorOutcome::Copy => self.confirm_screenshot(false),
+                    EditorOutcome::Changed => self.niri.queue_redraw_all(),
                 }
             }
         }
@@ -3414,6 +3440,16 @@ impl State {
 
     fn on_pointer_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
         if self.niri.region_selection.is_some() {
+            return;
+        }
+
+        if self.niri.screenshot_ui.is_open() {
+            let amount = event
+                .amount_v120(Axis::Vertical)
+                .unwrap_or_else(|| event.amount(Axis::Vertical).unwrap_or(0.) * 8.);
+            if self.niri.screenshot_ui.scroll_magnifier(amount) {
+                self.niri.queue_redraw_all();
+            }
             return;
         }
         let pointer = &self.niri.seat.get_pointer().unwrap();
@@ -3508,8 +3544,10 @@ impl State {
                                 mods,
                             )
                             .filter(|bind| {
-                                !self.niri.screenshot_ui.is_open()
-                                    || allowed_during_screenshot(&bind.action)
+                                bind_usable_for_screenshot(
+                                    &bind.action,
+                                    self.niri.screenshot_ui.is_open(),
+                                )
                             });
                             let bind_right = find_configured_bind(
                                 bindings,
@@ -3518,8 +3556,10 @@ impl State {
                                 mods,
                             )
                             .filter(|bind| {
-                                !self.niri.screenshot_ui.is_open()
-                                    || allowed_during_screenshot(&bind.action)
+                                bind_usable_for_screenshot(
+                                    &bind.action,
+                                    self.niri.screenshot_ui.is_open(),
+                                )
                             });
                             (bind_left, bind_right)
                         };
@@ -3603,14 +3643,18 @@ impl State {
                             mods,
                         )
                         .filter(|bind| {
-                            !self.niri.screenshot_ui.is_open()
-                                || allowed_during_screenshot(&bind.action)
+                            bind_usable_for_screenshot(
+                                &bind.action,
+                                self.niri.screenshot_ui.is_open(),
+                            )
                         });
                         let bind_down =
                             find_configured_bind(bindings, mod_key, Trigger::WheelScrollDown, mods)
                                 .filter(|bind| {
-                                    !self.niri.screenshot_ui.is_open()
-                                        || allowed_during_screenshot(&bind.action)
+                                    bind_usable_for_screenshot(
+                                        &bind.action,
+                                        self.niri.screenshot_ui.is_open(),
+                                    )
                                 });
                         (bind_up, bind_down)
                     };
@@ -3756,14 +3800,15 @@ impl State {
                         mods,
                     )
                     .filter(|bind| {
-                        !self.niri.screenshot_ui.is_open()
-                            || allowed_during_screenshot(&bind.action)
+                        bind_usable_for_screenshot(&bind.action, self.niri.screenshot_ui.is_open())
                     });
                     let bind_right =
                         find_configured_bind(bindings, mod_key, Trigger::TouchpadScrollRight, mods)
                             .filter(|bind| {
-                                !self.niri.screenshot_ui.is_open()
-                                    || allowed_during_screenshot(&bind.action)
+                                bind_usable_for_screenshot(
+                                    &bind.action,
+                                    self.niri.screenshot_ui.is_open(),
+                                )
                             });
                     drop(config);
 
@@ -3794,14 +3839,15 @@ impl State {
                         mods,
                     )
                     .filter(|bind| {
-                        !self.niri.screenshot_ui.is_open()
-                            || allowed_during_screenshot(&bind.action)
+                        bind_usable_for_screenshot(&bind.action, self.niri.screenshot_ui.is_open())
                     });
                     let bind_down =
                         find_configured_bind(bindings, mod_key, Trigger::TouchpadScrollDown, mods)
                             .filter(|bind| {
-                                !self.niri.screenshot_ui.is_open()
-                                    || allowed_during_screenshot(&bind.action)
+                                bind_usable_for_screenshot(
+                                    &bind.action,
+                                    self.niri.screenshot_ui.is_open(),
+                                )
                             });
                     drop(config);
 
@@ -3914,7 +3960,7 @@ impl State {
         let location = self.compute_tablet_location(event)?;
         let pos = location.content;
 
-        if let Some(output) = self.niri.screenshot_ui.selection_output() {
+        if let Some(output) = self.niri.screenshot_ui.motion_output() {
             let geom = self.niri.global_space.output_geometry(output).unwrap();
             let point = (location.display - geom.loc.to_f64())
                 .to_physical(output.current_scale().fractional_scale())
@@ -4127,10 +4173,10 @@ impl State {
             }
             TabletToolTipState::Up => {
                 if let Some(capture) = self.niri.screenshot_ui.pointer_up(None) {
-                    if capture {
-                        self.confirm_screenshot(true);
-                    } else {
-                        self.niri.queue_redraw_all();
+                    match capture {
+                        EditorOutcome::Save => self.confirm_screenshot(true),
+                        EditorOutcome::Copy => self.confirm_screenshot(false),
+                        EditorOutcome::Changed => self.niri.queue_redraw_all(),
                     }
                 }
 
@@ -4261,8 +4307,10 @@ impl State {
                             find_configured_bind(bindings, mod_key, trigger, mods)
                         }
                         .filter(|bind| {
-                            !self.niri.screenshot_ui.is_open()
-                                || allowed_during_screenshot(&bind.action)
+                            bind_usable_for_screenshot(
+                                &bind.action,
+                                self.niri.screenshot_ui.is_open(),
+                            )
                         });
                         if let Some(bind) = bind {
                             self.niri.suppressed_buttons.insert(button);
@@ -5546,10 +5594,10 @@ impl State {
         let slot = evt.slot();
 
         if let Some(capture) = self.niri.screenshot_ui.pointer_up(Some(slot)) {
-            if capture {
-                self.confirm_screenshot(true);
-            } else {
-                self.niri.queue_redraw_all();
+            match capture {
+                EditorOutcome::Save => self.confirm_screenshot(true),
+                EditorOutcome::Copy => self.confirm_screenshot(false),
+                EditorOutcome::Changed => self.niri.queue_redraw_all(),
             }
         }
 
@@ -5573,7 +5621,7 @@ impl State {
         let pos = location.content;
         let slot = evt.slot();
 
-        if let Some(output) = self.niri.screenshot_ui.selection_output().cloned() {
+        if let Some(output) = self.niri.screenshot_ui.motion_output().cloned() {
             let geom = self.niri.global_space.output_geometry(&output).unwrap();
             let point = (location.display - geom.loc.to_f64())
                 .to_physical(output.current_scale().fractional_scale())
@@ -5778,6 +5826,15 @@ fn should_intercept_key<'a>(
         disable_power_key_handling,
     );
 
+    // Editor-only binds are inert while the screenshot UI is closed: drop them
+    // so the press reaches clients (and so their release isn't suppressed).
+    if !screenshot_ui.is_open() {
+        if let Some(bind) = &final_bind {
+            if only_during_screenshot(&bind.action) {
+                final_bind = None;
+            }
+        }
+    }
     // Allow only a subset of compositor actions while the screenshot UI is open, since the user
     // cannot see the screen.
     if screenshot_ui.is_open() {
@@ -6074,7 +6131,36 @@ fn allowed_during_screenshot(action: &Action) -> bool {
             | Action::SetWindowWidth(_)
             | Action::SetWindowHeight(_)
             | Action::SetColumnWidth(_)
+            // Editor-only actions handled by the screenshot UI itself. They only
+            // apply while the UI is open: `bind_usable_for_screenshot` keeps
+            // them from being intercepted and swallowed when it is closed.
+            | Action::ScreenshotUndo
+            | Action::ScreenshotRedo
     )
+}
+
+/// Actions that exist only while the screenshot UI is open.
+///
+/// Unlike [`allowed_during_screenshot`], which decides whether a bind may run
+/// while the UI is open, this marks binds that must not be intercepted at all
+/// when the UI is closed: a `screenshot-undo` bind on Ctrl+Z must not swallow a
+/// client's own Ctrl+Z presses.
+fn only_during_screenshot(action: &Action) -> bool {
+    matches!(action, Action::ScreenshotUndo | Action::ScreenshotRedo)
+}
+
+/// Whether a bind for `action` may be triggered given the screenshot UI state.
+///
+/// While the screenshot UI is open, only [`allowed_during_screenshot`] actions
+/// can run; other keys are remapped to the UI's own bindings. While it is
+/// closed, editor-only actions are inert and their keys pass through to
+/// clients untouched.
+fn bind_usable_for_screenshot(action: &Action, screenshot_ui_open: bool) -> bool {
+    if screenshot_ui_open {
+        allowed_during_screenshot(action)
+    } else {
+        !only_during_screenshot(action)
+    }
 }
 
 fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
@@ -6523,10 +6609,17 @@ fn make_binds_iter<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    use smithay::output::{Mode, PhysicalProperties, Scale, Subpixel};
+    use smithay::utils::Size;
 
     use super::*;
-    use crate::animation::Clock;
+    use crate::animation::{Animation, Clock};
+    use crate::ui::screenshot_editor::Editor;
+    use crate::ui::screenshot_ui::Button;
 
     #[test]
     fn bindings_suppress_keys() {
@@ -6920,5 +7013,335 @@ mod tests {
             State::display_to_content(origin, display, transform),
             content
         );
+    }
+
+    /// A `ScreenshotUi` in the `Open` state without rendering resources. Only
+    /// used to drive the key-binding paths, which never touch render state.
+    fn open_screenshot_ui() -> ScreenshotUi {
+        let clock = Clock::default();
+        let config = Rc::new(RefCell::new(Config::default()));
+        let output = Output::new(
+            "test".to_string(),
+            PhysicalProperties {
+                size: Size::from((0, 0)),
+                subpixel: Subpixel::Unknown,
+                make: String::new(),
+                model: String::new(),
+                serial_number: String::new(),
+            },
+        );
+        output.change_current_state(
+            Some(Mode {
+                size: Size::from((1920, 1080)),
+                refresh: 60000,
+            }),
+            None,
+            Some(Scale::Fractional(1.)),
+            None,
+        );
+        let animation = config.borrow().animations.screenshot_ui_open.0;
+        ScreenshotUi::Open {
+            selection: (output, Point::from((0, 0)), Point::from((1919, 1079))),
+            selection_before: None,
+            output_data: HashMap::new(),
+            button: Button::Up,
+            editor: Editor::default(),
+            show_pointer: true,
+            open_anim: Animation::new(clock.clone(), 0., 1., 0., animation),
+            clock,
+            config,
+            path: None,
+        }
+    }
+
+    fn intercept_key(
+        suppressed_keys: &mut HashSet<Keycode>,
+        bindings: &[Bind],
+        screenshot_ui: &ScreenshotUi,
+        keysym: Keysym,
+        mods: ModifiersState,
+        pressed: bool,
+    ) -> FilterResult<Option<Bind>> {
+        should_intercept_key(
+            suppressed_keys,
+            bindings,
+            ModKey::Super,
+            // The keycode is arbitrary; only the keysym and modifiers matter.
+            Keycode::from(keysym.raw() + 8),
+            keysym,
+            Some(keysym),
+            pressed,
+            mods,
+            screenshot_ui,
+            false,
+            false,
+        )
+    }
+
+    fn bind(trigger: Keysym, modifiers: Modifiers, action: Action) -> Bind {
+        Bind {
+            key: Key {
+                trigger: Trigger::Keysym(trigger),
+                modifiers,
+            },
+            action,
+            repeat: true,
+            cooldown: None,
+            allow_when_locked: false,
+            allow_inhibiting: true,
+            hotkey_overlay_title: None,
+        }
+    }
+
+    #[test]
+    fn screenshot_editor_binds() {
+        let ctrl = ModifiersState {
+            ctrl: true,
+            ..Default::default()
+        };
+        let ctrl_shift = ModifiersState {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+        let mut suppressed_keys = HashSet::new();
+
+        // Editor-only binds are inert while the screenshot UI is closed: the
+        // press reaches the focused client and the release is not suppressed.
+        let closed_ui = ScreenshotUi::new(Clock::default(), Default::default());
+        let editor_binds = [
+            bind(Keysym::z, Modifiers::CTRL, Action::ScreenshotUndo),
+            bind(Keysym::q, Modifiers::CTRL, Action::CloseWindow),
+        ];
+
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &editor_binds,
+            &closed_ui,
+            Keysym::z,
+            ctrl,
+            true,
+        );
+        assert!(matches!(filter, FilterResult::Forward));
+        assert!(suppressed_keys.is_empty());
+
+        // Normal binds still apply while the screenshot UI is closed.
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &editor_binds,
+            &closed_ui,
+            Keysym::q,
+            ctrl,
+            true,
+        );
+        assert!(matches!(
+            filter,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::CloseWindow,
+                ..
+            }))
+        ));
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &editor_binds,
+            &closed_ui,
+            Keysym::q,
+            ctrl,
+            false,
+        );
+        assert!(matches!(filter, FilterResult::Intercept(None)));
+        assert!(suppressed_keys.is_empty());
+
+        let open_ui = open_screenshot_ui();
+
+        // A configured editor bind is found through the normal path while the
+        // screenshot UI is open, keeping its own properties (repeat=false).
+        let mut undo_bind = bind(Keysym::z, Modifiers::CTRL, Action::ScreenshotUndo);
+        undo_bind.repeat = false;
+        let editor_binds = [undo_bind];
+
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &editor_binds,
+            &open_ui,
+            Keysym::z,
+            ctrl,
+            true,
+        );
+        assert!(matches!(
+            filter,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::ScreenshotUndo,
+                repeat: false,
+                ..
+            }))
+        ));
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &editor_binds,
+            &open_ui,
+            Keysym::z,
+            ctrl,
+            false,
+        );
+        assert!(matches!(filter, FilterResult::Intercept(None)));
+        assert!(suppressed_keys.is_empty());
+
+        // Remapping: Ctrl+Z bound to redo wins over the hardcoded Ctrl+Z
+        // fallback.
+        let remap_binds = [bind(Keysym::z, Modifiers::CTRL, Action::ScreenshotRedo)];
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &remap_binds,
+            &open_ui,
+            Keysym::z,
+            ctrl,
+            true,
+        );
+        assert!(matches!(
+            filter,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::ScreenshotRedo,
+                ..
+            }))
+        ));
+        suppressed_keys.clear();
+
+        // Fallback keys with no configured bind produce repeating binds.
+        let no_binds: Vec<Bind> = Vec::new();
+
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &no_binds,
+            &open_ui,
+            Keysym::z,
+            ctrl,
+            true,
+        );
+        assert!(matches!(
+            filter,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::ScreenshotUndo,
+                repeat: true,
+                ..
+            }))
+        ));
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &no_binds,
+            &open_ui,
+            Keysym::z,
+            ctrl,
+            false,
+        );
+        assert!(matches!(filter, FilterResult::Intercept(None)));
+        assert!(suppressed_keys.is_empty());
+
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &no_binds,
+            &open_ui,
+            Keysym::z,
+            ctrl_shift,
+            true,
+        );
+        assert!(matches!(
+            filter,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::ScreenshotRedo,
+                ..
+            }))
+        ));
+        suppressed_keys.clear();
+
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &no_binds,
+            &open_ui,
+            Keysym::y,
+            ctrl,
+            true,
+        );
+        assert!(matches!(
+            filter,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::ScreenshotRedo,
+                ..
+            }))
+        ));
+        suppressed_keys.clear();
+
+        // A disallowed configured action loses to the UI fallback.
+        let close_binds = [bind(Keysym::z, Modifiers::CTRL, Action::CloseWindow)];
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &close_binds,
+            &open_ui,
+            Keysym::z,
+            ctrl,
+            true,
+        );
+        assert!(matches!(
+            filter,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::ScreenshotUndo,
+                ..
+            }))
+        ));
+        suppressed_keys.clear();
+
+        // Keys the editor doesn't handle are left alone.
+        let no_binds: Vec<Bind> = Vec::new();
+        let ctrl_alt = ModifiersState {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        };
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &no_binds,
+            &open_ui,
+            Keysym::z,
+            ctrl_alt,
+            true,
+        );
+        assert!(matches!(filter, FilterResult::Forward));
+
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &no_binds,
+            &open_ui,
+            Keysym::x,
+            ctrl,
+            true,
+        );
+        assert!(matches!(filter, FilterResult::Forward));
+    }
+
+    #[test]
+    fn screenshot_editor_suppresses_release_after_closing() {
+        let mut screenshot_ui = open_screenshot_ui();
+        let mut suppressed = HashSet::new();
+        let ctrl = ModifiersState {
+            ctrl: true,
+            ..Default::default()
+        };
+        let press = intercept_key(&mut suppressed, &[], &screenshot_ui, Keysym::z, ctrl, true);
+        assert!(matches!(
+            press,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::ScreenshotUndo,
+                ..
+            }))
+        ));
+        screenshot_ui.close();
+        let release = intercept_key(&mut suppressed, &[], &screenshot_ui, Keysym::z, ctrl, false);
+        assert!(matches!(release, FilterResult::Intercept(None)));
+        assert!(suppressed.is_empty());
+        // The next application key sequence must not inherit the editor's grab.
+        let press = intercept_key(&mut suppressed, &[], &screenshot_ui, Keysym::z, ctrl, true);
+        assert!(matches!(press, FilterResult::Forward));
+        let release = intercept_key(&mut suppressed, &[], &screenshot_ui, Keysym::z, ctrl, false);
+        assert!(matches!(release, FilterResult::Forward));
     }
 }

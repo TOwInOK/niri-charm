@@ -1,30 +1,33 @@
 use std::cell::RefCell;
 use std::cmp::{max, min};
 use std::collections::HashMap;
-use std::f64::consts::TAU;
 use std::iter::zip;
 use std::rc::Rc;
 
 use anyhow::Context;
-use arrayvec::ArrayVec;
 use niri_config::{Action, Config};
 use niri_ipc::SizeChange;
-use pango::{Alignment, FontDescription};
-use pangocairo::cairo::{self, ImageSurface};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::input::TouchSlot;
 use smithay::backend::renderer::element::utils::{Relocate, RelocateRenderElement};
 use smithay::backend::renderer::element::Kind;
-use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture, Uniform};
 use smithay::backend::renderer::{ExportMem, Texture as _};
 use smithay::input::keyboard::{Keysym, ModifiersState};
 use smithay::output::{Output, WeakOutput};
-use smithay::utils::{Buffer, Physical, Point, Rectangle, Scale, Size, Transform};
+use smithay::utils::{Physical, Point, Rectangle, Scale, Size, Transform};
 
+use super::screenshot_editor::{
+    self, Canvas, Color, Command, Control, Editor, EditorOutcome, Gesture, Tool, Toolbar,
+    ToolbarState,
+};
 use crate::animation::{Animation, Clock};
 use crate::layout::floating::DIRECTIONAL_MOVE_PX;
 use crate::niri_render_elements;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
+use crate::render_helpers::sampling::SamplingRenderElement;
+use crate::render_helpers::shader_element::ShaderRenderElement;
+use crate::render_helpers::shaders::{ProgramType, Shaders};
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::{render_to_texture, RenderTarget};
@@ -32,16 +35,7 @@ use crate::utils::to_physical_precise_round;
 
 const SELECTION_BORDER: i32 = 2;
 
-const PADDING: i32 = 8;
-const RADIUS: i32 = 16;
-const FONT: &str = "sans 14px";
-const BORDER: i32 = 4;
-const TEXT_HIDE_P: &str =
-    "Press <span face='mono' bgcolor='#2C2C2C'> Space </span> to save the screenshot.\n\
-     Press <span face='mono' bgcolor='#2C2C2C'> P </span> to hide the pointer.";
-const TEXT_SHOW_P: &str =
-    "Press <span face='mono' bgcolor='#2C2C2C'> Space </span> to save the screenshot.\n\
-     Press <span face='mono' bgcolor='#2C2C2C'> P </span> to show the pointer.";
+type Selection = (Output, Point<i32, Physical>, Point<i32, Physical>);
 
 // Ideally the screenshot UI should support cross-output selections. However, that poses some
 // technical challenges when the outputs have different scales and such. So, this implementation
@@ -56,9 +50,11 @@ pub enum ScreenshotUi {
         config: Rc<RefCell<Config>>,
     },
     Open {
-        selection: (Output, Point<i32, Physical>, Point<i32, Physical>),
+        selection: Selection,
+        selection_before: Option<Selection>,
         output_data: HashMap<Output, OutputData>,
         button: Button,
+        editor: Editor,
         show_pointer: bool,
         open_anim: Animation,
         clock: Clock,
@@ -80,7 +76,6 @@ pub enum Button {
     Up,
     Down {
         touch_slot: Option<TouchSlot>,
-        on_capture_button: bool,
         last_pos: (Output, Point<i32, Physical>),
         move_state: Option<MoveState>,
     },
@@ -94,7 +89,18 @@ pub struct OutputData {
     screenshot: [OutputScreenshot; 3],
     buffers: [SolidColorBuffer; 8],
     locations: [Point<i32, Physical>; 8],
-    panel: Option<(TextureBuffer<GlesTexture>, TextureBuffer<GlesTexture>)>,
+    canvas: Canvas,
+    toolbar: RefCell<Option<Toolbar>>,
+    magnifier: [RefCell<Option<Magnifier>>; 3],
+    composition: RefCell<Vec<PrimaryGpuTextureRenderElement>>,
+}
+
+struct Magnifier {
+    point: Point<i32, Physical>,
+    revision: u64,
+    show_pointer: bool,
+    zoom: u32,
+    lens: ShaderRenderElement,
 }
 
 pub struct OutputScreenshot {
@@ -105,6 +111,7 @@ pub struct OutputScreenshot {
 
 niri_render_elements! {
     ScreenshotUiRenderElement => {
+    Magnifier = SamplingRenderElement<ShaderRenderElement>,
         Screenshot = PrimaryGpuTextureRenderElement,
         SolidColor = SolidColorRenderElement,
     }
@@ -113,16 +120,6 @@ niri_render_elements! {
 impl Button {
     fn is_down(&self) -> bool {
         matches!(self, Self::Down { .. })
-    }
-
-    fn is_dragging_selection(&self) -> bool {
-        matches!(
-            self,
-            Self::Down {
-                on_capture_button: false,
-                ..
-            }
-        )
     }
 }
 
@@ -137,7 +134,7 @@ impl ScreenshotUi {
 
     pub fn open(
         &mut self,
-        renderer: &mut GlesRenderer,
+        _renderer: &mut GlesRenderer,
         // Output, screencast, screen capture.
         screenshots: HashMap<Output, [OutputScreenshot; 3]>,
         default_output: Output,
@@ -202,15 +199,6 @@ impl ScreenshotUi {
                 ];
                 let locations = [Default::default(); 8];
 
-                let mut render_panel_ = |text| {
-                    render_panel(renderer, scale, text)
-                        .map_err(|err| warn!("error rendering help panel: {err:?}"))
-                        .ok()
-                };
-                let panel_show = render_panel_(TEXT_SHOW_P);
-                let panel_hide = render_panel_(TEXT_HIDE_P);
-                let panel = Option::zip(panel_show, panel_hide);
-
                 let data = OutputData {
                     size,
                     scale,
@@ -218,7 +206,10 @@ impl ScreenshotUi {
                     screenshot,
                     buffers,
                     locations,
-                    panel,
+                    canvas: Canvas::default(),
+                    toolbar: RefCell::new(None),
+                    magnifier: Default::default(),
+                    composition: RefCell::new(Vec::new()),
                 };
                 (output, data)
             })
@@ -231,8 +222,10 @@ impl ScreenshotUi {
 
         *self = Self::Open {
             selection,
+            selection_before: None,
             output_data,
             button: Button::Up,
+            editor: Editor::default(),
             show_pointer,
             open_anim,
             clock: clock.clone(),
@@ -281,6 +274,9 @@ impl ScreenshotUi {
     }
 
     pub fn set_space_down(&mut self, down: bool) {
+        if let Self::Open { editor, .. } = self {
+            editor.space_down = down;
+        }
         if let Self::Open {
             selection,
             button:
@@ -621,160 +617,472 @@ impl ScreenshotUi {
 
     pub fn render_output(
         &self,
+        renderer: &mut GlesRenderer,
         output: &Output,
         target: RenderTarget,
         push: &mut dyn FnMut(ScreenshotUiRenderElement),
     ) {
-        let _span = tracy_client::span!("ScreenshotUi::render_output");
-
         let Self::Open {
             output_data,
+            editor,
             show_pointer,
-            button,
             open_anim,
+            button,
             ..
         } = self
         else {
-            panic!("screenshot UI must be open to render it");
-        };
-
-        let Some(output_data) = output_data.get(output) else {
             return;
         };
-
-        let scale = output_data.scale;
-        let progress = open_anim.clamped_value().clamp(0., 1.) as f32;
-
-        // The help panel goes on top.
-        if let Some((show, hide)) = &output_data.panel {
-            let buffer = if *show_pointer { hide } else { show };
-            let alpha = if button.is_dragging_selection() {
-                0.3
-            } else {
-                0.9
-            };
-            let location = panel_location(output_data, buffer.texture().size())
-                .to_f64()
-                .to_logical(scale);
-
-            let elem = PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
-                buffer.clone(),
-                location,
-                alpha * progress,
-                None,
-                None,
-                Kind::Unspecified,
-            ));
-            push(elem.into());
-        }
-
-        for (buffer, loc) in zip(&output_data.buffers, &output_data.locations) {
-            let elem = SolidColorRenderElement::from_buffer(
-                buffer,
-                loc.to_f64().to_logical(scale),
-                progress,
-                Kind::Unspecified,
-            );
-            push(elem.into());
-        }
-
-        // The screenshot itself goes last.
+        let Some(data) = output_data.get(output) else {
+            return;
+        };
         let index = match target {
             RenderTarget::Output => 0,
             RenderTarget::Screencast => 1,
             RenderTarget::ScreenCapture => 2,
         };
-        let screenshot = &output_data.screenshot[index];
-
-        if *show_pointer {
-            if let Some(pointer) = screenshot.pointer.clone() {
-                push(pointer.into());
+        let mut image = data.composition.borrow_mut();
+        image.clear();
+        let result = self.image_elements(renderer, output, index, &mut image);
+        if let Err(err) = &result {
+            warn!("error rendering screenshot editor: {err:?}");
+            image.clear();
+            image.push(data.screenshot[index].buffer.clone());
+        }
+        // Elements are emitted front-to-back. Only this method includes the overlay.
+        let dragging = button.is_down() || matches!(editor.gesture, Some(Gesture::Canvas { .. }));
+        let hover = editor
+            .pointer
+            .as_ref()
+            .filter(|(owner, _)| owner == output && !dragging)
+            .and_then(|(_, point)| {
+                screenshot_editor::hit_control(*point, data.size, data.scale, editor.palette_open)
+            });
+        match Toolbar::render(
+            &data.toolbar,
+            renderer,
+            ToolbarState::new(editor, *show_pointer, result.is_err(), hover),
+            data.size,
+            data.scale,
+            if dragging { 0.5 } else { 1.0 },
+        ) {
+            Ok(toolbar) => push(toolbar.into()),
+            Err(err) => warn!("error rendering screenshot toolbar: {err:?}"),
+        }
+        if result.is_ok() {
+            if let Some((owner, point)) = &editor.pointer {
+                if owner == output
+                    && !screenshot_editor::overlay_contains(
+                        *point,
+                        data.size,
+                        data.scale,
+                        editor.palette_open,
+                    )
+                {
+                    if let Err(err) =
+                        self.render_magnifier(renderer, output, *point, index, &image, push)
+                    {
+                        warn!("error rendering screenshot magnifier: {err:?}");
+                    }
+                }
             }
         }
-        push(screenshot.buffer.clone().into());
+        let progress = open_anim.clamped_value().clamp(0., 1.) as f32;
+        let canvas_len = result.unwrap_or(0);
+        let mut image = image.drain(..);
+        for (i, (buffer, loc)) in zip(&data.buffers, &data.locations).enumerate() {
+            // Keep the selection border above edits, but dim only the frozen viewport.
+            if i == 4 {
+                for element in image.by_ref().take(canvas_len) {
+                    push(element.into());
+                }
+            }
+            push(
+                SolidColorRenderElement::from_buffer(
+                    buffer,
+                    loc.to_f64().to_logical(data.scale),
+                    progress,
+                    Kind::Unspecified,
+                )
+                .into(),
+            );
+        }
+        for element in image {
+            push(element.into());
+        }
+    }
+
+    fn image_elements(
+        &self,
+        renderer: &mut GlesRenderer,
+        output: &Output,
+        index: usize,
+        elements: &mut Vec<PrimaryGpuTextureRenderElement>,
+    ) -> anyhow::Result<usize> {
+        let Self::Open {
+            output_data,
+            editor,
+            show_pointer,
+            ..
+        } = self
+        else {
+            anyhow::bail!("screenshot editor is closed");
+        };
+        let data = output_data
+            .get(output)
+            .context("screenshot output is missing")?;
+        data.canvas
+            .prepare(renderer, editor, output, data.size, data.scale)?;
+        let screenshot = &data.screenshot[index];
+        data.canvas.elements(
+            renderer,
+            editor.edits(output),
+            &screenshot.texture,
+            index,
+            data.scale,
+            &mut |element| elements.push(element),
+        )?;
+        let canvas_len = elements.len();
+        if *show_pointer {
+            if let Some(pointer) = &screenshot.pointer {
+                elements.push(pointer.clone());
+            }
+        }
+        elements.push(screenshot.buffer.clone());
+        Ok(canvas_len)
+    }
+
+    fn render_magnifier(
+        &self,
+        renderer: &mut GlesRenderer,
+        output: &Output,
+        point: Point<i32, Physical>,
+        index: usize,
+        image: &[PrimaryGpuTextureRenderElement],
+        push: &mut dyn FnMut(ScreenshotUiRenderElement),
+    ) -> anyhow::Result<()> {
+        let Self::Open {
+            output_data,
+            editor,
+            show_pointer,
+            ..
+        } = self
+        else {
+            return Ok(());
+        };
+        let data = &output_data[output];
+        let zoom = editor.magnifier_zoom.level();
+        if zoom == 1 {
+            return Ok(());
+        }
+        let diameter = ((192. * data.scale).round() as i32)
+            .min(data.size.w)
+            .min(data.size.h);
+        let extent = ((f64::from(diameter) / (f64::from(zoom) * data.scale)).ceil() as i32) | 1;
+        // Do not clamp the source origin: the cursor pixel stays in the center at edges.
+        let source = Rectangle::new(
+            point - Point::from((extent / 2, extent / 2)),
+            Size::from((extent, extent)),
+        );
+        let gap = (16. * data.scale).round() as i32;
+        let place = |p: i32, bound: i32| {
+            let loc = if p + gap + diameter <= bound {
+                p + gap
+            } else {
+                p - gap - diameter
+            };
+            loc.clamp(0, bound - diameter)
+        };
+        let loc: Point<i32, Physical> =
+            (place(point.x, data.size.w), place(point.y, data.size.h)).into();
+        let mut cache = data.magnifier[index].borrow_mut();
+        if cache.as_ref().is_none_or(|cached| {
+            cached.point != point
+                || cached.revision != editor.revision
+                || cached.show_pointer != *show_pointer
+                || cached.zoom != zoom
+        }) {
+            anyhow::ensure!(
+                Shaders::get(renderer)
+                    .program(ProgramType::ScreenshotMagnifier)
+                    .is_some(),
+                "magnifier shader is unavailable"
+            );
+            let elements = image.iter().rev().cloned().map(|element| {
+                RelocateRenderElement::from_element(
+                    element,
+                    source.loc.upscale(-1),
+                    Relocate::Relative,
+                )
+            });
+            let (texture, _) = render_to_texture(
+                renderer,
+                source.size,
+                data.scale.into(),
+                Transform::Normal,
+                Fourcc::Abgr8888,
+                elements,
+            )?;
+            let lens = ShaderRenderElement::new(
+                ProgramType::ScreenshotMagnifier,
+                Size::<f64, Physical>::from((f64::from(diameter), f64::from(diameter)))
+                    .to_logical(data.scale),
+                None,
+                data.scale as f32,
+                1.,
+                Rc::new([
+                    Uniform::new("source_size", extent as f32),
+                    Uniform::new("zoom", zoom as f32),
+                ]),
+                HashMap::from([("image".to_owned(), texture)]),
+                Kind::Unspecified,
+            )
+            .with_location(loc.to_f64().to_logical(data.scale));
+            *cache = Some(Magnifier {
+                point,
+                revision: editor.revision,
+                show_pointer: *show_pointer,
+                zoom,
+                lens,
+            });
+        }
+        let cached = cache.as_ref().unwrap();
+        push(SamplingRenderElement::new(cached.lens.clone(), true).into());
+        Ok(())
+    }
+
+    pub fn scroll_magnifier(&mut self, amount_v120: f64) -> bool {
+        match self {
+            Self::Open { editor, .. } => editor.magnifier_zoom.scroll(amount_v120),
+            Self::Closed { .. } => false,
+        }
     }
 
     pub fn capture(
         &self,
         renderer: &mut GlesRenderer,
     ) -> anyhow::Result<(Size<i32, Physical>, Vec<u8>)> {
-        let _span = tracy_client::span!("ScreenshotUi::capture");
-
         let Self::Open {
             selection,
             output_data,
-            show_pointer,
             ..
         } = self
         else {
-            panic!("screenshot UI must be open to capture");
+            anyhow::bail!("screenshot editor is closed");
         };
-
         let data = &output_data[&selection.0];
         let rect = rect_from_corner_points(selection.1, selection.2);
-
-        let screenshot = &data.screenshot[0];
-
-        // Composite the pointer on top if needed.
-        let mut tex_rect = None;
-        if *show_pointer {
-            if let Some(pointer) = screenshot.pointer.clone() {
-                let scale = pointer.0.buffer().texture_scale();
-                let offset = rect.loc.upscale(-1);
-
-                let mut elements = ArrayVec::<_, 2>::new();
-                elements.push(pointer);
-                elements.push(screenshot.buffer.clone());
-                let elements = elements.iter().rev().map(|elem| {
-                    RelocateRenderElement::from_element(elem, offset, Relocate::Relative)
-                });
-
-                let res = render_to_texture(
-                    renderer,
-                    rect.size,
-                    scale,
-                    Transform::Normal,
-                    Fourcc::Abgr8888,
-                    elements,
-                );
-                match res {
-                    Ok((texture, _)) => {
-                        tex_rect = Some((texture, Rectangle::from_size(rect.size)));
-                    }
-                    Err(err) => {
-                        warn!("error compositing pointer onto screenshot: {err:?}");
-                    }
-                }
-            }
-        }
-
-        let (texture, rect) = tex_rect.unwrap_or_else(|| (screenshot.texture.clone(), rect));
-        // The size doesn't actually matter because we're not transforming anything.
-        let buf_rect = rect
-            .to_logical(1)
-            .to_buffer(1, Transform::Normal, &Size::from((1, 1)));
-
-        let mapping = renderer
-            .copy_texture(&texture, buf_rect, Fourcc::Abgr8888)
-            .context("error copying texture")?;
-        let copy = renderer
-            .map_texture(&mapping)
-            .context("error mapping texture")?;
-
-        Ok((rect.size, copy.to_vec()))
+        let mut elements = data.composition.borrow_mut();
+        elements.clear();
+        self.image_elements(renderer, &selection.0, 0, &mut elements)?;
+        let elements = elements.drain(..).rev().map(|element| {
+            RelocateRenderElement::from_element(element, rect.loc.upscale(-1), Relocate::Relative)
+        });
+        let (texture, _) = render_to_texture(
+            renderer,
+            rect.size,
+            data.scale.into(),
+            Transform::Normal,
+            Fourcc::Abgr8888,
+            elements,
+        )
+        .context("error compositing screenshot edits")?;
+        let mapping = renderer.copy_texture(
+            &texture,
+            Rectangle::from_size(texture.size()),
+            Fourcc::Abgr8888,
+        )?;
+        let pixels = renderer.map_texture(&mapping)?;
+        Ok((rect.size, pixels.to_vec()))
     }
 
     pub fn action(&self, raw: Keysym, mods: ModifiersState) -> Option<Action> {
-        let Self::Open { button, .. } = self else {
+        let Self::Open { button, editor, .. } = self else {
             return None;
         };
 
-        // Pressing Space while the button is down goes into origin moving rather than capture.
-        if matches!(button, Button::Down { .. }) && raw == Keysym::space {
-            return None;
+        // Do not export an unfinished gesture.
+        if button.is_down() || editor.gesture.is_some() {
+            return (raw == Keysym::Escape).then_some(Action::CancelScreenshot);
         }
 
         action(raw, mods)
+    }
+    fn toggle_palette(&mut self) {
+        if let Self::Open { editor, .. } = self {
+            if editor.tool == Tool::Draw {
+                editor.palette_open = !editor.palette_open;
+                if editor.focus.is_some() {
+                    editor.focus = Some(if editor.palette_open {
+                        Control::Color(editor.color)
+                    } else {
+                        Control::Tool(Tool::Draw)
+                    });
+                }
+            }
+        }
+    }
+
+    fn activate_control(&mut self, control: Control) -> EditorOutcome {
+        let Self::Open { editor, .. } = self else {
+            return EditorOutcome::Changed;
+        };
+        if !screenshot_editor::control_enabled(control, editor) {
+            return EditorOutcome::Changed;
+        }
+        match control {
+            Control::Tool(tool) => {
+                let focused = editor.focus.is_some();
+                let palette_open = editor.palette_open;
+                self.set_tool(tool);
+                if focused {
+                    if let Self::Open { editor, .. } = self {
+                        editor.focus = Some(control);
+                    }
+                }
+                if tool == Tool::Draw {
+                    if let Self::Open { editor, .. } = self {
+                        editor.palette_open = palette_open;
+                    }
+                    self.toggle_palette();
+                }
+            }
+            Control::Color(color) => {
+                editor.palette_open = false;
+                editor.focus = editor.focus.map(|_| Control::Tool(Tool::Draw));
+                self.set_color(color);
+            }
+            Control::Undo => self.undo(),
+            Control::Redo => self.redo(),
+            Control::Pointer => self.toggle_pointer(),
+            Control::Save => return EditorOutcome::Save,
+            Control::Copy => return EditorOutcome::Copy,
+        }
+        EditorOutcome::Changed
+    }
+
+    /// Handle hardcoded editor controls before configurable compositor bindings.
+    /// The outer option denotes ownership; the inner option requests a compositor action.
+    pub fn handle_editor_key(
+        &mut self,
+        raw: Keysym,
+        mods: ModifiersState,
+    ) -> Option<Option<Action>> {
+        let Self::Open { editor, button, .. } = self else {
+            return None;
+        };
+        if raw == Keysym::Escape {
+            if editor.palette_open {
+                editor.palette_open = false;
+                editor.focus = editor.focus.map(|_| Control::Tool(Tool::Draw));
+                return Some(None);
+            }
+            if self.cancel_edit() {
+                return Some(None);
+            }
+            if let Self::Open {
+                button,
+                selection,
+                selection_before,
+                ..
+            } = self
+            {
+                if button.is_down() {
+                    *button = Button::Up;
+                    if let Some(previous) = selection_before.take() {
+                        *selection = previous;
+                    }
+                    self.update_buffers();
+                    return Some(None);
+                }
+            }
+            return None;
+        }
+        if mods.ctrl || mods.alt || mods.logo {
+            return None;
+        }
+        if raw == Keysym::space {
+            return Some(None);
+        }
+        if raw == Keysym::Tab || raw == Keysym::ISO_Left_Tab {
+            if button.is_down() || editor.gesture.is_some() {
+                return Some(None);
+            }
+            let controls = screenshot_editor::CONTROLS.iter().copied().chain(
+                screenshot_editor::COLORS
+                    .iter()
+                    .copied()
+                    .map(Control::Color),
+            );
+            let enabled = |control: &Control| {
+                screenshot_editor::control_enabled(*control, editor)
+                    && (!matches!(control, Control::Color(_)) || editor.palette_open)
+            };
+            let count = controls.clone().filter(enabled).count();
+            let current = controls
+                .clone()
+                .filter(enabled)
+                .position(|c| Some(c) == editor.focus);
+            let backwards = mods.shift || raw == Keysym::ISO_Left_Tab;
+            let next = match (current, backwards) {
+                (Some(i), true) => (i + count - 1) % count,
+                (Some(i), false) => (i + 1) % count,
+                (None, true) => count - 1,
+                (None, false) => 0,
+            };
+            editor.focus = controls.filter(enabled).nth(next);
+            return Some(None);
+        }
+        if mods.shift {
+            return None;
+        }
+        if button.is_down() || editor.gesture.is_some() {
+            return matches!(
+                raw,
+                Keysym::v | Keysym::b | Keysym::r | Keysym::c | Keysym::Return
+            )
+            .then_some(None);
+        }
+        let tool = match raw {
+            Keysym::v => Some(Tool::Select),
+            Keysym::b => Some(Tool::Draw),
+            Keysym::r => Some(Tool::Blur),
+            _ => None,
+        };
+        if let Some(tool) = tool {
+            self.set_tool(tool);
+            return Some(None);
+        }
+        if raw == Keysym::c {
+            self.toggle_palette();
+            return Some(None);
+        }
+        let control = match raw {
+            Keysym::Return if !button.is_down() && editor.gesture.is_none() => editor.focus?,
+            Keysym::_1
+            | Keysym::_2
+            | Keysym::_3
+            | Keysym::_4
+            | Keysym::_5
+            | Keysym::_6
+            | Keysym::_7
+                if editor.palette_open =>
+            {
+                let index = (raw.raw() - Keysym::_1.raw()) as usize;
+                Control::Color(screenshot_editor::COLORS[index])
+            }
+            _ => return None,
+        };
+        let outcome = self.activate_control(control);
+        Some(match outcome {
+            EditorOutcome::Changed => None,
+            EditorOutcome::Save => Some(Action::ConfirmScreenshot {
+                write_to_disk: true,
+            }),
+            EditorOutcome::Copy => Some(Action::ConfirmScreenshot {
+                write_to_disk: false,
+            }),
+        })
     }
 
     pub fn selection_output(&self) -> Option<&Output> {
@@ -787,6 +1095,20 @@ impl ScreenshotUi {
         } else {
             None
         }
+    }
+
+    pub fn motion_output(&self) -> Option<&Output> {
+        if let Self::Open { editor, .. } = self {
+            if let Some(
+                Gesture::Canvas { output, .. }
+                | Gesture::Toolbar { output, .. }
+                | Gesture::Overlay { output, .. },
+            ) = &editor.gesture
+            {
+                return Some(output);
+            }
+        }
+        self.selection_output()
     }
 
     pub fn output_size(&self, output: &Output) -> Option<(Size<i32, Physical>, f64, Transform)> {
@@ -819,45 +1141,79 @@ impl ScreenshotUi {
         let Self::Open {
             selection,
             output_data,
-            button:
-                Button::Down {
-                    touch_slot,
-                    on_capture_button,
-                    last_pos,
-                    move_state,
-                },
+            editor,
+            button,
             ..
         } = self
         else {
             return;
         };
-
+        let owner = match &editor.gesture {
+            Some(
+                Gesture::Canvas {
+                    output,
+                    slot: owner,
+                    ..
+                }
+                | Gesture::Toolbar {
+                    output,
+                    slot: owner,
+                    ..
+                }
+                | Gesture::Overlay {
+                    output,
+                    slot: owner,
+                },
+            ) => {
+                if *owner != slot {
+                    return;
+                }
+                output
+            }
+            None => &selection.0,
+        };
+        let data = &output_data[owner];
+        editor.pointer = Rectangle::from_size(data.size)
+            .contains(point)
+            .then(|| (owner.clone(), point));
+        editor.focus = None;
+        if editor.gesture.is_some() {
+            let point = Point::from((
+                point.x.clamp(0, data.size.w - 1),
+                point.y.clamp(0, data.size.h - 1),
+            ));
+            if matches!(editor.gesture, Some(Gesture::Canvas { .. })) {
+                data.canvas.damage(editor.motion(point, slot));
+                editor.revision = editor.revision.wrapping_add(1);
+            }
+            return;
+        }
+        let Button::Down {
+            touch_slot,
+            last_pos,
+            move_state,
+        } = button
+        else {
+            return;
+        };
         if *touch_slot != slot {
             return;
         }
-
         last_pos.1 = point;
-
-        if *on_capture_button {
-            return;
-        }
-
         if let Some(move_state) = move_state {
-            // The cursor offset is relative to selection.1.
             let delta = point - (selection.1 + move_state.pointer_offset);
-
             let desired = rect_from_corner_points(selection.1 + delta, selection.2 + delta);
-            let bounds = Rectangle::from_size(output_data[&selection.0].size - desired.size);
+            let bounds = Rectangle::from_size(data.size - desired.size);
             let clamped_loc = desired.loc.constrain(bounds);
-
             let delta = clamped_loc - rect_from_corner_points(selection.1, selection.2).loc;
             selection.1 += delta;
             selection.2 += delta;
         } else {
-            let size = output_data[&selection.0].size;
-            selection.2 = Point::new(point.x.clamp(0, size.w - 1), point.y.clamp(0, size.h - 1));
+            selection.2 = Point::from((
+                point.x.clamp(0, data.size.w - 1),
+                point.y.clamp(0, data.size.h - 1),
+            ));
         }
-
         self.update_buffers();
     }
 
@@ -870,25 +1226,29 @@ impl ScreenshotUi {
     ) -> bool {
         let Self::Open {
             selection,
+            selection_before,
             output_data,
-            show_pointer,
+            editor,
             button,
             ..
         } = self
         else {
             return false;
         };
-
-        // Check if this is a second touch (different slot) while already dragging.
+        let Some(data) = output_data.get(&output) else {
+            return false;
+        };
+        if editor.gesture.is_some() {
+            return false;
+        }
         if let Some(new_slot) = slot {
             if let Button::Down {
-                on_capture_button: false,
+                touch_slot,
                 move_state,
                 last_pos,
-                ..
             } = button
             {
-                if move_state.is_none() {
+                if *touch_slot != slot && move_state.is_none() {
                     *move_state = Some(MoveState {
                         pointer_offset: last_pos.1 - selection.1,
                         touch_slot: Some(new_slot),
@@ -896,19 +1256,39 @@ impl ScreenshotUi {
                 }
             }
         }
-
         if button.is_down() {
             return false;
         }
-
-        if move_existing {
+        editor.pointer = Some((output.clone(), point));
+        editor.focus = None;
+        if let Some(control) =
+            screenshot_editor::hit_control(point, data.size, data.scale, editor.palette_open)
+        {
+            if !screenshot_editor::control_enabled(control, editor) {
+                editor.gesture = Some(Gesture::Overlay { output, slot });
+                return true;
+            }
+            editor.gesture = Some(Gesture::Toolbar {
+                output,
+                slot,
+                control,
+            });
+            return true;
+        }
+        if editor.palette_open
+            || screenshot_editor::overlay_contains(point, data.size, data.scale, false)
+        {
+            editor.palette_open = false;
+            editor.gesture = Some(Gesture::Overlay { output, slot });
+            return true;
+        }
+        if move_existing || editor.space_down {
             if output != selection.0 {
                 return false;
             }
-
+            *selection_before = Some(selection.clone());
             *button = Button::Down {
                 touch_slot: slot,
-                on_capture_button: false,
                 last_pos: (output, point),
                 move_state: Some(MoveState {
                     pointer_offset: point - selection.1,
@@ -917,121 +1297,188 @@ impl ScreenshotUi {
             };
             return true;
         }
-
-        let Some(output_data) = output_data.get(&output) else {
-            return false;
-        };
-
-        if let Some((show, hide)) = &output_data.panel {
-            let buffer = if *show_pointer { hide } else { show };
-            let panel_size = buffer.texture().size();
-            let location = panel_location(output_data, panel_size);
-
-            if is_within_capture_button(output_data.scale, panel_size, point - location) {
-                *button = Button::Down {
-                    touch_slot: slot,
-                    on_capture_button: true,
-                    last_pos: (output, point),
-                    move_state: None,
-                };
-                return false;
+        let point = Point::from((
+            point.x.clamp(0, data.size.w - 1),
+            point.y.clamp(0, data.size.h - 1),
+        ));
+        if editor.tool != Tool::Select {
+            editor.begin(output.clone(), point, slot);
+            if let Some(Gesture::Canvas { edit, .. }) = &editor.gesture {
+                data.canvas.damage(edit.stroke_bounds());
             }
+            editor.revision = editor.revision.wrapping_add(1);
+            if output != selection.0 {
+                self.move_to_output(output);
+            }
+            return true;
         }
-
+        *selection_before = Some(selection.clone());
         *button = Button::Down {
             touch_slot: slot,
-            on_capture_button: false,
             last_pos: (output.clone(), point),
             move_state: None,
         };
-
-        let point = Point::new(
-            point.x.clamp(0, output_data.size.w - 1),
-            point.y.clamp(0, output_data.size.h - 1),
-        );
         *selection = (output, point, point);
-
         self.update_buffers();
-
         true
     }
 
-    pub fn pointer_up(&mut self, slot: Option<TouchSlot>) -> Option<bool> {
+    pub fn pointer_up(&mut self, slot: Option<TouchSlot>) -> Option<EditorOutcome> {
         let Self::Open {
             selection,
+            selection_before,
             output_data,
+            editor,
             button,
-            show_pointer,
             ..
         } = self
         else {
             return None;
         };
-
-        let Button::Down {
-            touch_slot,
-            on_capture_button,
-            ref last_pos,
-            ref mut move_state,
-            ..
-        } = *button
-        else {
-            return None;
-        };
-
-        if touch_slot != slot {
-            // This is not our main touch, but it might be the move touch. If so, stop the move.
-            if let Some(state) = move_state {
-                if state.touch_slot.is_some_and(|m_slot| Some(m_slot) == slot) {
-                    *move_state = None;
-                }
-            };
-
-            return None;
-        }
-
-        let last_pos = last_pos.clone();
-        *button = Button::Up;
-
-        // Check if we released still on the capture button.
-        if on_capture_button {
-            let (output, point) = last_pos;
-
-            #[allow(clippy::question_mark)]
-            let Some(output_data) = output_data.get(&output) else {
+        if let Some(gesture) = &editor.gesture {
+            let (Gesture::Canvas { slot: owner, .. }
+            | Gesture::Toolbar { slot: owner, .. }
+            | Gesture::Overlay { slot: owner, .. }) = gesture;
+            if *owner != slot {
                 return None;
-            };
-
-            if let Some((show, hide)) = &output_data.panel {
-                let buffer = if *show_pointer { hide } else { show };
-                let panel_size = buffer.texture().size();
-                let location = panel_location(output_data, panel_size);
-
-                if is_within_capture_button(output_data.scale, panel_size, point - location) {
-                    return Some(true);
+            }
+            match editor.gesture.take().unwrap() {
+                Gesture::Overlay { .. } => return Some(EditorOutcome::Changed),
+                Gesture::Canvas { output, edit, .. } => {
+                    editor.history.push(Command { output, edit });
+                    editor.redo.clear();
+                    editor.revision = editor.revision.wrapping_add(1);
+                    return Some(EditorOutcome::Changed);
+                }
+                Gesture::Toolbar {
+                    output, control, ..
+                } => {
+                    let data = &output_data[&output];
+                    let hit = editor
+                        .pointer
+                        .as_ref()
+                        .filter(|(owner, _)| *owner == output)
+                        .and_then(|(_, point)| {
+                            screenshot_editor::hit_control(
+                                *point,
+                                data.size,
+                                data.scale,
+                                editor.palette_open,
+                            )
+                        });
+                    if hit != Some(control) {
+                        return Some(EditorOutcome::Changed);
+                    }
+                    return Some(self.activate_control(control));
                 }
             }
         }
-
-        // Check if the resulting selection is zero-sized, and try to come up with a small
-        // default rectangle.
+        let Button::Down {
+            touch_slot,
+            move_state,
+            ..
+        } = button
+        else {
+            return None;
+        };
+        if *touch_slot != slot {
+            if move_state
+                .as_ref()
+                .is_some_and(|state| state.touch_slot.is_some() && state.touch_slot == slot)
+            {
+                *move_state = None;
+            }
+            return None;
+        }
+        *button = Button::Up;
+        *selection_before = None;
         let (output, a, b) = selection;
-        let mut rect = rect_from_corner_points(*a, *b);
-        if rect.size.is_empty() || rect.size == Size::from((1, 1)) {
-            let data = &output_data[output];
-            rect = Rectangle::new(
-                Point::from((rect.loc.x - 16, rect.loc.y - 16)),
-                Size::from((32, 32)),
-            )
-            .intersection(Rectangle::from_size(data.size))
-            .unwrap_or_default();
+        let rect = rect_from_corner_points(*a, *b);
+        if rect.size == Size::from((1, 1)) {
+            let rect = Rectangle::new((rect.loc.x - 16, rect.loc.y - 16).into(), (32, 32).into())
+                .intersection(Rectangle::from_size(output_data[output].size))
+                .unwrap_or_default();
             *a = rect.loc;
             *b = rect.loc + rect.size - Size::from((1, 1));
         }
-
         self.update_buffers();
+        Some(EditorOutcome::Changed)
+    }
 
-        Some(false)
+    fn cancel_edit(&mut self) -> bool {
+        let Self::Open {
+            editor,
+            output_data,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        let Some(gesture) = editor.gesture.take() else {
+            return false;
+        };
+        if let Gesture::Canvas { output, edit, .. } = gesture {
+            output_data[&output].canvas.damage(edit.stroke_bounds());
+            editor.revision = editor.revision.wrapping_add(1);
+        }
+        true
+    }
+
+    pub fn set_tool(&mut self, tool: Tool) {
+        self.cancel_edit();
+        if let Self::Open { editor, .. } = self {
+            editor.tool = tool;
+            editor.palette_open = false;
+            editor.focus = None;
+        }
+    }
+
+    pub fn set_color(&mut self, color: Color) {
+        if let Self::Open { editor, .. } = self {
+            editor.color = color;
+        }
+    }
+
+    pub fn undo(&mut self) {
+        if self.cancel_edit() {
+            return;
+        }
+        let Self::Open {
+            editor,
+            output_data,
+            ..
+        } = self
+        else {
+            return;
+        };
+        if let Some(command) = editor.history.pop() {
+            output_data[&command.output]
+                .canvas
+                .damage(command.edit.stroke_bounds());
+            editor.redo.push(command);
+            editor.revision = editor.revision.wrapping_add(1);
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if self.cancel_edit() {
+            return;
+        }
+        let Self::Open {
+            editor,
+            output_data,
+            ..
+        } = self
+        else {
+            return;
+        };
+        if let Some(command) = editor.redo.pop() {
+            output_data[&command.output]
+                .canvas
+                .damage(command.edit.stroke_bounds());
+            editor.history.push(command);
+            editor.revision = editor.revision.wrapping_add(1);
+        }
     }
 }
 
@@ -1087,11 +1534,24 @@ fn action(raw: Keysym, mods: ModifiersState) -> Option<Action> {
         return Some(Action::CancelScreenshot);
     }
 
-    if mods.alt || mods.shift {
+    if (mods.ctrl ^ mods.alt) && !mods.logo {
+        if raw == Keysym::z {
+            return Some(if mods.shift {
+                Action::ScreenshotRedo
+            } else {
+                Action::ScreenshotUndo
+            });
+        }
+        if mods.ctrl && !mods.shift && raw == Keysym::y {
+            return Some(Action::ScreenshotRedo);
+        }
+    }
+
+    if mods.alt || mods.shift || mods.logo {
         return None;
     }
 
-    if !mods.ctrl && (raw == Keysym::space || raw == Keysym::Return) {
+    if (!mods.ctrl && raw == Keysym::Return) || (mods.ctrl && raw == Keysym::s) {
         return Some(Action::ConfirmScreenshot {
             write_to_disk: true,
         });
@@ -1120,125 +1580,4 @@ pub fn rect_from_corner_points(
     // We're adding + 1 because the pointer is clamped to output size - 1, so to get the full
     // screen worth of selection we must add back that + 1.
     Rectangle::from_extremities((x1, y1), (x2 + 1, y2 + 1))
-}
-
-fn panel_location(output_data: &OutputData, panel_size: Size<i32, Buffer>) -> Point<i32, Physical> {
-    let scale = output_data.scale;
-    let padding: i32 = to_physical_precise_round(scale, PADDING);
-    let x = max(0, (output_data.size.w - panel_size.w) / 2);
-    let y = max(0, output_data.size.h - panel_size.h - padding * 2);
-    Point::from((x, y))
-}
-
-fn is_within_capture_button(
-    scale: f64,
-    panel_size: Size<i32, Buffer>,
-    pos_within_panel: Point<i32, Physical>,
-) -> bool {
-    let padding: i32 = to_physical_precise_round(scale, PADDING);
-    let radius = to_physical_precise_round::<i32>(scale, RADIUS) - 2;
-
-    let xc = padding + radius;
-    let yc = panel_size.h / 2;
-    let pos = pos_within_panel;
-
-    (pos.x - xc) * (pos.x - xc) + (pos.y - yc) * (pos.y - yc) <= radius * radius
-}
-
-fn render_panel(
-    renderer: &mut GlesRenderer,
-    scale: f64,
-    text: &str,
-) -> anyhow::Result<TextureBuffer<GlesTexture>> {
-    let _span = tracy_client::span!("screenshot_ui::render_panel");
-
-    let padding: i32 = to_physical_precise_round(scale, PADDING);
-    // Keep the border width even to avoid blurry edges.
-    let border_width = (f64::from(BORDER) / 2. * scale).round() * 2.;
-    let half_border_width = (border_width / 2.) as i32;
-    let radius: i32 = to_physical_precise_round(scale, RADIUS);
-    let circle_stroke: f64 = to_physical_precise_round(scale, 2.);
-
-    // Add 2 px of spacing to separate the backgrounds of the "Space" and "P" keys.
-    let spacing = to_physical_precise_round::<i32>(scale, 2) * 1024;
-
-    let mut font = FontDescription::from_string(FONT);
-    font.set_absolute_size(to_physical_precise_round(scale, font.size()));
-
-    let surface = ImageSurface::create(cairo::Format::ARgb32, 0, 0)?;
-    let cr = cairo::Context::new(&surface)?;
-    let layout = pangocairo::functions::create_layout(&cr);
-    layout.context().set_round_glyph_positions(false);
-    layout.set_font_description(Some(&font));
-    layout.set_alignment(Alignment::Left);
-    layout.set_markup(text);
-    layout.set_spacing(spacing);
-
-    let (mut width, mut height) = layout.pixel_size();
-
-    width += padding + radius * 2 + padding - half_border_width + padding;
-    height = max(height, radius * 2);
-    height += padding * 2;
-
-    let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
-    let cr = cairo::Context::new(&surface)?;
-    cr.set_source_rgb(0.1, 0.1, 0.1);
-    cr.paint()?;
-
-    let padding = f64::from(padding);
-    let half_border_width = f64::from(half_border_width);
-    let r = f64::from(radius);
-
-    let yc = f64::from(height / 2);
-
-    cr.new_sub_path();
-    cr.arc(padding + r, yc, r, 0., TAU);
-    cr.set_source_rgb(1., 1., 1.);
-    cr.fill()?;
-
-    cr.new_sub_path();
-    cr.arc(padding + r, yc, r - circle_stroke, 0., TAU);
-    cr.set_source_rgb(0.1, 0.1, 0.1);
-    cr.fill()?;
-
-    cr.new_sub_path();
-    cr.arc(padding + r, yc, r - circle_stroke * 2., 0., TAU);
-    cr.set_source_rgb(1., 1., 1.);
-    cr.fill()?;
-
-    cr.move_to(padding + r * 2. + padding - half_border_width, padding);
-
-    let layout = pangocairo::functions::create_layout(&cr);
-    layout.context().set_round_glyph_positions(false);
-    layout.set_font_description(Some(&font));
-    layout.set_alignment(Alignment::Left);
-    layout.set_markup(text);
-    layout.set_spacing(spacing);
-
-    cr.set_source_rgb(1., 1., 1.);
-    pangocairo::functions::show_layout(&cr, &layout);
-
-    cr.move_to(0., 0.);
-    cr.line_to(width.into(), 0.);
-    cr.line_to(width.into(), height.into());
-    cr.line_to(0., height.into());
-    cr.line_to(0., 0.);
-    cr.set_source_rgb(0.3, 0.3, 0.3);
-    cr.set_line_width(border_width);
-    cr.stroke()?;
-    drop(cr);
-
-    let data = surface.take_data().unwrap();
-    let buffer = TextureBuffer::from_memory(
-        renderer,
-        &data,
-        Fourcc::Argb8888,
-        (width, height),
-        false,
-        scale,
-        Transform::Normal,
-        Vec::new(),
-    )?;
-
-    Ok(buffer)
 }
