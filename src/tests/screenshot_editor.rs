@@ -1681,3 +1681,29 @@ fn screenshot_editor_touch_cancel_restores_crop_and_preserves_mouse_gesture() {
         2
     ));
 }
+
+#[test]
+fn screenshot_editor_closed_command_preserves_overview_touch_grab() {
+    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
+    use smithay::backend::input::InputEvent;
+
+    let mut f = set_up(CONFIG);
+    let touch = f.niri().seat.add_touch();
+    f.niri_state().do_action(Action::ToggleOverview, false);
+    f.niri_state().refresh_and_flush_clients();
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchDown {
+            event: TestTouchEvent {
+                slot: Some(0).into(),
+                position: (0.5, 0.5),
+            },
+        });
+    assert!(touch.is_grabbed());
+    assert!(!f.niri().screenshot_ui.is_open());
+    f.niri_state().do_action(Action::ScreenshotUndo, false);
+    assert!(touch.is_grabbed());
+
+    // Ordinary actions still end the grab before changing compositor state.
+    f.niri_state().do_action(Action::ToggleOverview, false);
+    assert!(!touch.is_grabbed());
+}

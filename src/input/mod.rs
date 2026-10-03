@@ -901,6 +901,10 @@ impl State {
             return;
         }
 
+        if action.is_screenshot_editor_local() && !self.niri.screenshot_ui.is_open() {
+            return;
+        }
+
         if let Some(touch) = self.niri.seat.get_touch() {
             touch.cancel(self);
         }

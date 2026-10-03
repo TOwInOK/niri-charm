@@ -298,6 +298,8 @@ binds {
 
 Opening tools are `"select"` (default), `"draw"`, `"arrow"`, `"rectangle"` and `"blur"`. See [Key Bindings](./Configuration:-Key-Bindings.md#screenshot-screenshot-screen-screenshot-window) for editor actions.
 
+Editor-local actions are no-ops while the editor is closed, including through IPC; they do not interrupt an unrelated touch gesture or grab.
+
 `quality` applies only to that export: WebP accepts `0`–`100` (lossy, including at `100`), AVIF accepts `1`–`100`. Without it, WebP is lossless and AVIF uses quality `90`. PNG and clipboard-only exports ignore quality; clipboard images always remain PNG. There are no quality settings inside the appearance block. See [screenshot-format](./Configuration:-Miscellaneous.md#screenshot-format) and [screenshot-path](./Configuration:-Miscellaneous.md#screenshot-path).
 
 `screenshot-confirm` activates the keyboard-focused control; without focus it saves and copies. `confirm-screenshot` exports regardless of focus. Neither exports an unfinished gesture. `screenshot-cancel` closes the palette, cancels the current gesture, then closes the editor on subsequent calls; `cancel-screenshot` immediately discards the session.
