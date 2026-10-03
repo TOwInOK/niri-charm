@@ -459,3 +459,23 @@ fn screenshot_editor_binds_while_open() {
         "client must not see editor bind keys: {out}"
     );
 }
+
+#[test]
+fn screenshot_editor_cooldown_is_independent_from_ordinary_bind() {
+    let config = r#"
+        binds {
+            B cooldown-ms=100000 { screenshot; }
+            B cooldown-ms=100000 { cancel-screenshot; }
+        }
+    "#;
+    let (mut f, id, surface) = set_up_with(config, Clone::clone);
+    f.niri_state().backend.headless().add_renderer().unwrap();
+    let input = "+AB05 -AB05";
+    run_f(&mut f, id, &surface, input);
+    assert!(f.niri().screenshot_ui.is_open());
+    run_f(&mut f, id, &surface, input);
+    assert!(!f.niri().screenshot_ui.is_open());
+    // The ordinary category still has its own active cooldown.
+    run_f(&mut f, id, &surface, input);
+    assert!(!f.niri().screenshot_ui.is_open());
+}

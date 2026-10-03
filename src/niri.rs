@@ -352,7 +352,8 @@ pub struct Niri {
     pub suppressed_keys: HashSet<Keycode>,
     /// Button codes of the mouse buttons to suppress.
     pub suppressed_buttons: HashSet<u32>,
-    pub bind_cooldown_timers: HashMap<Key, RegistrationToken>,
+    /// Cooldowns are independent for ordinary and screenshot-local bindings.
+    pub bind_cooldown_timers: HashMap<(Key, bool), RegistrationToken>,
     pub bind_repeat_timer: Option<RegistrationToken>,
     /// Active `zoom hold=true` session, if any.
     ///

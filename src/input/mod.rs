@@ -857,7 +857,8 @@ impl State {
             return;
         }
 
-        match self.niri.bind_cooldown_timers.entry(bind.key) {
+        let key = (bind.key, bind.action.is_screenshot_editor_local());
+        match self.niri.bind_cooldown_timers.entry(key) {
             // The bind is on cooldown.
             Entry::Occupied(_) => (),
             Entry::Vacant(entry) => {
@@ -866,7 +867,7 @@ impl State {
                     .niri
                     .event_loop
                     .insert_source(timer, move |_, _, state| {
-                        if state.niri.bind_cooldown_timers.remove(&bind.key).is_none() {
+                        if state.niri.bind_cooldown_timers.remove(&key).is_none() {
                             error!("bind cooldown timer entry disappeared");
                         }
                         TimeoutAction::Drop

@@ -71,7 +71,7 @@ binds {
 }
 ```
 
-Binds can also have a cooldown, which will rate-limit the bind and prevent it from repeatedly triggering too quickly.
+Binds can also have a cooldown, which will rate-limit the bind and prevent it from repeatedly triggering too quickly. An ordinary binding and a screenshot-editor binding on the same key have independent cooldowns, so opening the editor cannot rate-limit its local close command.
 
 ```kdl
 binds {
