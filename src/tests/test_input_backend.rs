@@ -1,6 +1,6 @@
 use smithay::backend::input::{
-    Device, DeviceCapability, Event, InputBackend, InputTime, KeyState, KeyboardKeyEvent, Keycode,
-    UnusedEvent,
+    Axis, AxisRelativeDirection, AxisSource, Device, DeviceCapability, Event, InputBackend,
+    InputTime, KeyState, KeyboardKeyEvent, Keycode, PointerAxisEvent, UnusedEvent,
 };
 use smithay::output::Output;
 
@@ -22,7 +22,7 @@ impl InputBackend for TestInputBackend {
     type Device = TestInputDevice;
 
     type KeyboardKeyEvent = TestKeyboardKeyEvent;
-    type PointerAxisEvent = UnusedEvent;
+    type PointerAxisEvent = TestPointerAxisEvent;
     type PointerButtonEvent = UnusedEvent;
     type PointerMotionEvent = UnusedEvent;
     type PointerMotionAbsoluteEvent = UnusedEvent;
@@ -100,5 +100,40 @@ impl KeyboardKeyEvent<TestInputBackend> for TestKeyboardKeyEvent {
 
     fn count(&self) -> u32 {
         self.count
+    }
+}
+
+pub struct TestPointerAxisEvent {
+    pub source: AxisSource,
+    pub axis: Axis,
+    pub amount: Option<f64>,
+    pub v120: Option<f64>,
+}
+
+impl Event<TestInputBackend> for TestPointerAxisEvent {
+    fn time(&self) -> InputTime {
+        InputTime::from_millis(0)
+    }
+
+    fn device(&self) -> TestInputDevice {
+        TestInputDevice
+    }
+}
+
+impl PointerAxisEvent<TestInputBackend> for TestPointerAxisEvent {
+    fn amount(&self, axis: Axis) -> Option<f64> {
+        (axis == self.axis).then_some(self.amount).flatten()
+    }
+
+    fn amount_v120(&self, axis: Axis) -> Option<f64> {
+        (axis == self.axis).then_some(self.v120).flatten()
+    }
+
+    fn source(&self) -> AxisSource {
+        self.source
+    }
+
+    fn relative_direction(&self, _: Axis) -> AxisRelativeDirection {
+        AxisRelativeDirection::Identical
     }
 }

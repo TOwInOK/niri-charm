@@ -3528,8 +3528,9 @@ impl State {
         // consumed: they go through the configured bind search (editor-local
         // binds win over ordinary ones), and anything unbound is swallowed so
         // neither desktop zoom nor clients see them.
+        let source = event.source();
         if self.niri.screenshot_ui.is_open() {
-            let (pos_x, neg_x, pos_y, neg_y) = match event.source() {
+            let (pos_x, neg_x, pos_y, neg_y) = match source {
                 AxisSource::Wheel => (
                     Trigger::WheelScrollRight,
                     Trigger::WheelScrollLeft,
@@ -3545,8 +3546,12 @@ impl State {
                 _ => return,
             };
 
-            let horizontal_v120 = event.amount_v120(Axis::Horizontal).unwrap_or(0.);
-            let vertical_v120 = event.amount_v120(Axis::Vertical).unwrap_or(0.);
+            let amount = |axis| match source {
+                AxisSource::Finger => event.amount(axis),
+                _ => event.amount_v120(axis),
+            };
+            let horizontal = amount(Axis::Horizontal).unwrap_or(0.);
+            let vertical = amount(Axis::Vertical).unwrap_or(0.);
 
             let mods = self.niri.seat.get_keyboard().unwrap().modifier_state();
             let modifiers = modifiers_from_state(mods);
@@ -3562,8 +3567,7 @@ impl State {
                 drop(bindings);
                 drop(config);
 
-                // High-resolution deltas accumulate through the existing
-                // trackers: one normalized wheel step runs the action once.
+                // Preserve the source units: v120 for wheels, pixels for fingers.
                 let (h_tracker, v_tracker) = if pos_x == Trigger::WheelScrollRight {
                     (
                         &mut self.niri.horizontal_wheel_tracker,
@@ -3576,8 +3580,8 @@ impl State {
                     )
                 };
                 (
-                    h_tracker.accumulate(horizontal_v120),
-                    v_tracker.accumulate(vertical_v120),
+                    h_tracker.accumulate(horizontal),
+                    v_tracker.accumulate(vertical),
                     binds,
                 )
             };
@@ -3596,8 +3600,6 @@ impl State {
             return;
         }
         let pointer = &self.niri.seat.get_pointer().unwrap();
-
-        let source = event.source();
 
         let mod_key = self.backend.mod_key(&self.niri.config.borrow());
 

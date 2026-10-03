@@ -216,6 +216,8 @@ binds {
 
 `screenshot-context` first uses the control focused by `screenshot-focus-next` or `screenshot-focus-previous`. Without keyboard focus it uses pointer hit-testing. A focused or hovered Draw, Arrow or Rectangle button changes its own stroke width; Blur changes its strength. Neither focus nor this command selects the tool. Select, palette controls and other UI absorb the command without zooming; with no focus, toolbar padding also blocks it and the canvas changes magnifier zoom. With neither focus nor a pointer, it is a no-op. Mouse movement clears keyboard focus and restores pointer-based routing. Each tool remembers its value independently. A bare integer sets an absolute value from `1` to `128`, clamped to the target: widths `1`–`128`, Blur `1`–`3`, magnifier rounded down to a power of two within `max-zoom`. Signed strings such as `"+1"` or `"-1"` adjust without wrapping. Tool parameters remain frozen during a gesture, while canvas zoom remains available. Explicit `screenshot-magnifier-zoom` ignores both focus and hover.
 
+Configured `TouchpadScroll*` bindings accumulate continuous movement in 10-pixel steps, independently per axis and separately from wheel ticks. Unbound scroll input remains confined to the editor.
+
 ### Magnifier
 
 | Setting                 | Default       | Meaning                                                               |

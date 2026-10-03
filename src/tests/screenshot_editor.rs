@@ -942,6 +942,47 @@ fn screenshot_editor_palette_swatches_require_open_popup_and_dismiss_cleanly() {
 }
 
 #[test]
+fn screenshot_editor_scroll_uses_source_units_and_accumulates() {
+    use super::test_input_backend::{TestInputBackend, TestPointerAxisEvent};
+    use smithay::backend::input::{Axis, AxisSource, InputEvent};
+
+    let mut f = set_up(&format!(
+        r#"{CONFIG}
+        binds {{
+            TouchpadScrollDown {{ screenshot-context "+1"; }}
+            TouchpadScrollUp {{ screenshot-context "-1"; }}
+            TouchpadScrollRight {{ screenshot-context "+2"; }}
+            WheelScrollRight {{ screenshot-context "+1"; }}
+        }}"#
+    ));
+    open_ui(&mut f);
+    command(&mut f, Action::ScreenshotTool { tool: Tool::Draw });
+    command(&mut f, Action::ScreenshotFocusNext);
+    command(&mut f, Action::ScreenshotFocusNext);
+    let initial = with_editor(&mut f, |e| e.width);
+    for (source, axis, amount, v120, delta) in [
+        (AxisSource::Finger, Axis::Vertical, Some(6.), None, 0),
+        (AxisSource::Finger, Axis::Vertical, Some(4.), None, 1),
+        (AxisSource::Finger, Axis::Vertical, Some(-10.), None, 0),
+        (AxisSource::Wheel, Axis::Horizontal, Some(15.), Some(60.), 0),
+        (AxisSource::Wheel, Axis::Horizontal, Some(15.), Some(60.), 1),
+        (AxisSource::Finger, Axis::Horizontal, Some(10.), None, 3),
+        (AxisSource::Finger, Axis::Vertical, Some(30.), None, 6),
+    ] {
+        f.niri_state()
+            .process_input_event::<TestInputBackend>(InputEvent::PointerAxis {
+                event: TestPointerAxisEvent {
+                    source,
+                    axis,
+                    amount,
+                    v120,
+                },
+            });
+        assert_eq!(with_editor(&mut f, |e| e.width), initial + delta);
+    }
+}
+
+#[test]
 fn screenshot_editor_focus_activation_and_palette_selection() {
     let mut f = set_up(CONFIG);
     open_ui(&mut f);
