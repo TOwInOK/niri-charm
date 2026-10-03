@@ -448,6 +448,45 @@ fn screenshot_editor_undo_redo_are_global_and_new_edit_clears_redo() {
 }
 
 #[test]
+fn screenshot_editor_stronger_blur_covers_weaker_in_both_orders() {
+    use niri_config::screenshot::BlurStrength::{self, High, Low, Medium};
+
+    fn blur(f: &mut Fixture, output: &Output, strength: BlurStrength) {
+        f.niri().screenshot_ui.set_tool(Tool::Blur);
+        let ScreenshotUi::Open { editor, .. } = &mut f.niri().screenshot_ui else {
+            unreachable!()
+        };
+        editor.blur_strength = strength;
+        gesture(f, output, &[(320, 240), (640, 480)]);
+    }
+
+    let mut f = set_up(CONFIG);
+    let output = f.niri_output(1);
+    let id = f.add_client();
+    open_window(&mut f, id, "left", 480, 720, [u32::MAX, 0, 0, u32::MAX]);
+    open_window(&mut f, id, "right", 480, 720, [0, u32::MAX, 0, u32::MAX]);
+    open_ui(&mut f);
+    select(&mut f, &output, (80, 80), (879, 639));
+
+    for (weak, strong) in [(Low, Medium), (Low, High), (Medium, High)] {
+        blur(&mut f, &output, strong);
+        let (_, expected) = capture(&mut f);
+        f.niri().screenshot_ui.undo();
+        blur(&mut f, &output, weak);
+        assert_ne!(capture(&mut f).1, expected);
+        f.niri().screenshot_ui.undo();
+        for order in [[weak, strong], [strong, weak]] {
+            for strength in order {
+                blur(&mut f, &output, strength);
+            }
+            assert_eq!(capture(&mut f).1, expected);
+            f.niri().screenshot_ui.undo();
+            f.niri().screenshot_ui.undo();
+        }
+    }
+}
+
+#[test]
 fn screenshot_editor_blur_softens_inside_rect_and_restores_on_undo() {
     let mut f = set_up(CONFIG);
     let output = f.niri_output(1);

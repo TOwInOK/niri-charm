@@ -174,7 +174,7 @@ Drag an arrow from tail to head; its head scales with the captured width. Drag a
 
 The Blur button has three bottom segments filled from left to right. Its tooltip names the level without repeating the count. Clicking it only selects Blur. `screenshot-context "+1"` and `"-1"` change the keyboard-focused tool, falling back to the tool under the pointer. For Blur this changes strength without wrapping; absolute values `1`, `2`, `3` select low, medium, high. The command does not select the tool, and only new blur regions use the new strength.
 
-Blur affects the frozen background beneath drawings, not the drawings themselves. It is a visual effect, **not a guarantee that sensitive information cannot be recovered**.
+Blur affects the frozen background beneath drawings, not the drawings themselves. Where regions overlap, high strength covers medium, and medium covers low, regardless of the order in which you draw them. Undo/redo still follows the order of edits. Blur is a visual effect, **not a guarantee that sensitive information cannot be recovered**.
 
 ### Axis guides
 

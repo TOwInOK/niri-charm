@@ -376,7 +376,7 @@ impl Editor {
         &'a self,
         output: &'a Output,
         interaction: &'a Interaction,
-    ) -> impl Iterator<Item = &'a Edit> {
+    ) -> impl Iterator<Item = &'a Edit> + Clone {
         self.history
             .iter()
             .filter(move |c| &c.output == output)
@@ -789,7 +789,7 @@ impl Canvas {
     pub fn elements<'a>(
         &self,
         renderer: &mut GlesRenderer,
-        edits: impl IntoIterator<Item = &'a Edit>,
+        edits: impl Iterator<Item = &'a Edit> + Clone,
         source: &GlesTexture,
         target: usize,
         scale: f64,
@@ -800,41 +800,48 @@ impl Canvas {
                 push(element(buffer.clone(), (0., 0.), None, None));
             }
         }
-        for edit in edits {
-            let Edit::Blur(blur) = edit else {
-                continue;
-            };
-            let slot = &self.blurred[target][strength_index(blur.strength)];
-            let blurred = match slot.get() {
-                Some(buffer) => buffer,
-                None => {
-                    let mut blur_fx =
-                        Blur::new(renderer).context("screenshot blur shader is unavailable")?;
-                    let options = blur_options(blur.strength);
-                    blur_fx.prepare_textures(
-                        |format, size| renderer.create_buffer(format, size),
-                        source,
-                        options,
-                    )?;
-                    let texture = blur_fx.render(renderer, source, options)?;
-                    let buffer = TextureBuffer::from_texture(
-                        renderer,
-                        texture,
-                        scale,
-                        Transform::Normal,
-                        Vec::new(),
-                    );
-                    let _ = slot.set(buffer);
-                    slot.get().unwrap()
+        // Front-to-back: stronger blur always covers weaker blur, independently
+        // of history order. Three fixed passes avoid sorting or allocating.
+        for strength in [BlurStrength::High, BlurStrength::Medium, BlurStrength::Low] {
+            for edit in edits.clone() {
+                let Edit::Blur(blur) = edit else {
+                    continue;
+                };
+                if blur.strength != strength {
+                    continue;
                 }
-            };
-            let rect = blur.rect.to_f64().to_logical(scale);
-            push(element(
-                blurred.clone(),
-                rect.loc,
-                Some(rect),
-                Some(rect.size),
-            ));
+                let slot = &self.blurred[target][strength_index(strength)];
+                let blurred = match slot.get() {
+                    Some(buffer) => buffer,
+                    None => {
+                        let mut blur_fx =
+                            Blur::new(renderer).context("screenshot blur shader is unavailable")?;
+                        let options = blur_options(strength);
+                        blur_fx.prepare_textures(
+                            |format, size| renderer.create_buffer(format, size),
+                            source,
+                            options,
+                        )?;
+                        let texture = blur_fx.render(renderer, source, options)?;
+                        let buffer = TextureBuffer::from_texture(
+                            renderer,
+                            texture,
+                            scale,
+                            Transform::Normal,
+                            Vec::new(),
+                        );
+                        let _ = slot.set(buffer);
+                        slot.get().unwrap()
+                    }
+                };
+                let rect = blur.rect.to_f64().to_logical(scale);
+                push(element(
+                    blurred.clone(),
+                    rect.loc,
+                    Some(rect),
+                    Some(rect.size),
+                ));
+            }
         }
         Ok(())
     }

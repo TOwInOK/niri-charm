@@ -629,8 +629,9 @@ the original payload. Tool parameter changes mid-gesture do not alter a stroke t
 has already started.
 
 Blur operates on the frozen frame beneath drawings, not sequentially on the entire
-composition. Each blur operation stores its `BlurStrength`. Presets map to
-`BlurOptions` in one place:
+composition. Overlapping regions have fixed strength priority: high covers medium,
+and medium covers low, regardless of insertion order. Undo/Redo remains chronological.
+Each blur operation stores its `BlurStrength`. Presets map to `BlurOptions` in one place:
 
 | Preset | Implemented passes / offset | Effect |
 | --- | --- | --- |
