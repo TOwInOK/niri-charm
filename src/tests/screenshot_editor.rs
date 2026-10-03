@@ -1742,3 +1742,61 @@ fn screenshot_editor_tooltip_is_visible_on_translucent_toolbar() {
     assert!(changed.loc.y + changed.size.h <= button.loc.y + button.size.h + 64);
     assert!(pixels_equal_in(size, &without_tip, &with_tip, button));
 }
+
+#[test]
+fn screenshot_editor_duplicate_palette_colors_remain_keyboard_accessible() {
+    use super::test_input_backend::{TestInputBackend, TestKeyboardKeyEvent};
+    use smithay::backend::input::{InputEvent, InputTime, KeyState};
+
+    let mut f = set_up(&format!(
+        r##"{CONFIG}
+        screenshot {{ brush {{ color "#ff0000"; palette "#ff0000" "#ff0000" "#0080ff"; }}; }}
+        binds {{
+            Tab {{ screenshot-focus-next; }}
+            BackSpace {{ screenshot-focus-previous; }}
+            Return {{ screenshot-confirm; }}
+        }}"##
+    ));
+    open_ui(&mut f);
+    command(&mut f, Action::ScreenshotTool { tool: Tool::Draw });
+    command(&mut f, Action::ScreenshotFocusNext);
+    command(&mut f, Action::ScreenshotFocusNext);
+    command(&mut f, Action::ScreenshotTogglePalette);
+    assert_eq!(focus(&mut f), Some(Control::Color(0)));
+
+    let key = |f: &mut Fixture, code: u32| {
+        for state in [KeyState::Pressed, KeyState::Released] {
+            f.niri_state()
+                .process_input_event::<TestInputBackend>(InputEvent::Keyboard {
+                    event: TestKeyboardKeyEvent {
+                        time: InputTime::from_micros(0),
+                        code: code.into(),
+                        state,
+                        count: 1,
+                    },
+                });
+        }
+    };
+    key(&mut f, 23); // Tab reaches the second red swatch.
+    assert_eq!(focus(&mut f), Some(Control::Color(1)));
+    f.niri().config.borrow_mut().screenshot.tooltips.enabled = false;
+    f.niri()
+        .screenshot_ui
+        .refresh_config(niri_config::ModKey::Super);
+    key(&mut f, 23);
+    key(&mut f, 36); // Return selects blue, including across an unrelated reload.
+    assert_eq!(
+        with_editor(&mut f, |e| e.color),
+        Color {
+            r: 0,
+            g: 128,
+            b: 255
+        }
+    );
+
+    command(&mut f, Action::ScreenshotSetPalette { open: true });
+    key(&mut f, 22); // BackSpace traverses both red swatches in reverse.
+    assert_eq!(focus(&mut f), Some(Control::Color(1)));
+    key(&mut f, 22);
+    assert_eq!(focus(&mut f), Some(Control::Color(0)));
+}

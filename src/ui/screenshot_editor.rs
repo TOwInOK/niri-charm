@@ -93,8 +93,8 @@ use super::screenshot_ui::Interaction;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Control {
     Tool(ScreenshotTool),
-    /// Palette swatch identified by its RGB value.
-    Color(ScreenshotColor),
+    /// Palette swatch identified by position, including repeated colors.
+    Color(usize),
     Copy,
     Undo,
     Redo,
@@ -245,18 +245,27 @@ impl Editor {
         if self.settings.blur.strength != settings.blur.strength {
             self.blur_strength = settings.blur.strength;
         }
+        let focused_color = match self.focus {
+            Some(Control::Color(index)) => self.palette().get(index).copied().map(rgb8),
+            _ => None,
+        };
         self.settings = settings;
-        // Focus on a swatch that no longer exists returns to the active
-        // colored tool's button, or the brush button for the other tools.
-        if let Some(Control::Color(color)) = self.focus {
-            if !self
-                .palette()
-                .iter()
-                .any(|swatch| rgb8(*swatch) == color)
-            {
-                let tool = self.color_tool().unwrap_or(ScreenshotTool::Draw);
-                self.focus = Some(Control::Tool(tool));
-            }
+        if let Some(Control::Color(index)) = self.focus {
+            let new_index = focused_color.and_then(|color| {
+                let palette = self.palette();
+                if palette
+                    .get(index)
+                    .is_some_and(|swatch| rgb8(*swatch) == color)
+                {
+                    Some(index)
+                } else {
+                    palette.iter().position(|swatch| rgb8(*swatch) == color)
+                }
+            });
+            // Keep the same swatch when possible; a removed color returns to its tool.
+            self.focus = Some(new_index.map(Control::Color).unwrap_or_else(|| {
+                Control::Tool(self.color_tool().unwrap_or(ScreenshotTool::Draw))
+            }));
         }
         self.revision = self.revision.wrapping_add(1);
         self.settings_revision = self.settings_revision.wrapping_add(1);
@@ -335,9 +344,7 @@ impl Editor {
         let width = self.tool_width(tool);
         let next = match change {
             ScreenshotValueChange::Set(value) => value,
-            ScreenshotValueChange::Adjust(delta) => {
-                width.saturating_add_signed(delta)
-            }
+            ScreenshotValueChange::Adjust(delta) => width.saturating_add_signed(delta),
         };
         let next = clamp_width(next);
         let changed = next != width;
@@ -494,7 +501,6 @@ impl Edit {
     }
 }
 
-
 /// Clamps a configured or requested stroke width to the IPC bounds.
 fn clamp_width(width: u32) -> u32 {
     width.clamp(
@@ -552,13 +558,19 @@ fn arrow_bounds(
     b: Point<i32, Physical>,
     width: u32,
 ) -> Rectangle<i32, Physical> {
-    padded(rectangle(a, b), width as i32 / 2 + arrow_head_len(width) as i32 + 1)
+    padded(
+        rectangle(a, b),
+        width as i32 / 2 + arrow_head_len(width) as i32 + 1,
+    )
 }
 
 /// Draws the arrow shaft and head; caller sets width, color, caps and joins.
 /// A zero-length gesture is a dot, matching a one-point stroke.
 fn draw_arrow(cr: &cairo::Context, arrow: &ArrowEdit) -> Result<()> {
-    let (ax, ay) = (f64::from(arrow.origin.x) + 0.5, f64::from(arrow.origin.y) + 0.5);
+    let (ax, ay) = (
+        f64::from(arrow.origin.x) + 0.5,
+        f64::from(arrow.origin.y) + 0.5,
+    );
     let (bx, by) = (f64::from(arrow.end.x) + 0.5, f64::from(arrow.end.y) + 0.5);
     if arrow.origin == arrow.end {
         cr.arc(ax, ay, cr.line_width() / 2., 0., std::f64::consts::TAU);
@@ -574,7 +586,10 @@ fn draw_arrow(cr: &cairo::Context, arrow: &ArrowEdit) -> Result<()> {
     cr.line_to(bx, by);
     for sign in [-1., 1.] {
         cr.move_to(bx, by);
-        cr.line_to(bx - head * ux - sign * fin * uy, by - head * uy + sign * fin * ux);
+        cr.line_to(
+            bx - head * ux - sign * fin * uy,
+            by - head * uy + sign * fin * ux,
+        );
     }
     cr.stroke()?;
     Ok(())
@@ -1091,9 +1106,9 @@ pub fn hit_control(
     tool: ScreenshotTool,
 ) -> Option<Control> {
     if palette_open {
-        for (i, color) in tool_palette(settings, tool).iter().enumerate() {
+        for i in 0..tool_palette(settings, tool).len() {
             if control_rect(CONTROLS.len() + i, size, scale, settings, tool).contains(point) {
-                return Some(Control::Color(rgb8(*color)));
+                return Some(Control::Color(i));
             }
         }
     }
@@ -1130,10 +1145,7 @@ pub fn overlay_contains(
 pub fn control_enabled(control: Control, editor: &Editor, interaction: &Interaction) -> bool {
     match control {
         // The palette and its colors only make sense for colored tools.
-        Control::Color(color) => {
-            editor.color_tool().is_some()
-                && editor.palette().iter().any(|swatch| rgb8(*swatch) == color)
-        }
+        Control::Color(index) => index < editor.palette().len(),
         // An in-progress canvas gesture can be cancelled by undo.
         Control::Undo => {
             !editor.history.is_empty() || matches!(interaction, Interaction::Canvas { .. })
@@ -1144,17 +1156,11 @@ pub fn control_enabled(control: Control, editor: &Editor, interaction: &Interact
 }
 
 /// Combined bar + popover index for `control_rect`.
-fn control_index(control: Control, settings: &ScreenshotConfig, tool: ScreenshotTool) -> usize {
-    if let Some(index) = CONTROLS.iter().position(|c| *c == control) {
-        index
-    } else if let Control::Color(color) = control {
-        CONTROLS.len()
-            + tool_palette(settings, tool)
-                .iter()
-                .position(|c| rgb8(*c) == color)
-                .unwrap_or(0)
+fn control_index(control: Control) -> usize {
+    if let Control::Color(index) = control {
+        CONTROLS.len() + index
     } else {
-        0
+        CONTROLS.iter().position(|c| *c == control).unwrap_or(0)
     }
 }
 
@@ -1194,16 +1200,8 @@ impl ToolbarState {
         };
         Self {
             tool: editor.tool,
-            colors: [
-                editor.color,
-                editor.arrow_color,
-                editor.rectangle_color,
-            ],
-            widths: [
-                editor.width,
-                editor.arrow_width,
-                editor.rectangle_width,
-            ],
+            colors: [editor.color, editor.arrow_color, editor.rectangle_color],
+            widths: [editor.width, editor.arrow_width, editor.rectangle_width],
             blur_strength: editor.blur_strength,
             axes_enabled: editor.axes_enabled,
             palette_open: editor.palette_open,
@@ -1306,13 +1304,14 @@ fn tooltip_text(state: &ToolbarState, editor: &Editor, control: Control) -> Stri
                 format!("Save{}", suffix(control))
             }
         }
-        Control::Color(color) => {
+        Control::Color(index) => {
+            let color = rgb8(editor.palette()[index]);
             format!(
-                "#{:02x}{:02x}{:02x}{}",
+                "Color #{:02x}{:02x}{:02x}{}",
                 color.r,
                 color.g,
                 color.b,
-                suffix(control)
+                suffix(control),
             )
         }
     }
@@ -1445,9 +1444,7 @@ impl Toolbar {
         let number_layout = pangocairo::functions::create_layout(&mcr);
         let mut number_font = font.clone();
         number_font.set_absolute_size(
-            (settings.tooltips.font_size * 0.62 * bar.k).max(6.)
-                * scale
-                * f64::from(pango::SCALE),
+            (settings.tooltips.font_size * 0.62 * bar.k).max(6.) * scale * f64::from(pango::SCALE),
         );
         number_layout.set_font_description(Some(&number_font));
         let (tip_text, tip_anchor) = match tip {
@@ -1474,13 +1471,8 @@ impl Toolbar {
             .clamp(mt, (height - h - mb).max(mt));
             let x = match tip_anchor {
                 Some(control) => {
-                    let rect = control_rect(
-                        control_index(control, settings, state.tool),
-                        size,
-                        scale,
-                        settings,
-                        state.tool,
-                    );
+                    let rect =
+                        control_rect(control_index(control), size, scale, settings, state.tool);
                     let cx = (f64::from(rect.loc.x) + f64::from(rect.size.w) / 2.) / scale;
                     (cx - w / 2.).clamp(ml, (width - w - mr).max(ml))
                 }
@@ -1653,7 +1645,7 @@ impl Toolbar {
             }
             for (i, swatch) in tool_palette(settings, state.tool).iter().enumerate() {
                 let color = rgb8(*swatch);
-                let control = Control::Color(color);
+                let control = Control::Color(i);
                 let hovered = state.hover == Some(control);
                 let pressed = state.pressed == Some(control);
                 let focused = state.focus == Some(control);
@@ -1780,7 +1772,14 @@ mod tests {
                 hit_control(center, size(), 1., false, &settings, ScreenshotTool::Draw),
                 Some(*control)
             );
-            assert!(overlay_contains(center, size(), 1., false, &settings, ScreenshotTool::Draw));
+            assert!(overlay_contains(
+                center,
+                size(),
+                1.,
+                false,
+                &settings,
+                ScreenshotTool::Draw
+            ));
         }
     }
 
@@ -1804,7 +1803,13 @@ mod tests {
         assert_eq!(top.loc.x, 100 + 4);
 
         settings.toolbar.align = ScreenshotToolbarAlign::Right;
-        let last = control_rect(CONTROLS.len() - 1, size(), 1., &settings, ScreenshotTool::Draw);
+        let last = control_rect(
+            CONTROLS.len() - 1,
+            size(),
+            1.,
+            &settings,
+            ScreenshotTool::Draw,
+        );
         assert_eq!(last.loc.x + last.size.w, 1920 - 20 - 4);
     }
 
@@ -1818,7 +1823,14 @@ mod tests {
             hit_control(center, size(), 1., false, &settings, ScreenshotTool::Draw),
             Some(Control::Color(_))
         ));
-        assert!(overlay_contains(center, size(), 1., true, &settings, ScreenshotTool::Draw));
+        assert!(overlay_contains(
+            center,
+            size(),
+            1.,
+            true,
+            &settings,
+            ScreenshotTool::Draw
+        ));
         assert!(matches!(
             hit_control(center, size(), 1., true, &settings, ScreenshotTool::Draw),
             Some(Control::Color(_))
@@ -1829,7 +1841,13 @@ mod tests {
     fn popover_wraps_after_four_columns() {
         let settings = ScreenshotConfig::default();
         let first = control_rect(CONTROLS.len(), size(), 1., &settings, ScreenshotTool::Draw);
-        let fifth = control_rect(CONTROLS.len() + 4, size(), 1., &settings, ScreenshotTool::Draw);
+        let fifth = control_rect(
+            CONTROLS.len() + 4,
+            size(),
+            1.,
+            &settings,
+            ScreenshotTool::Draw,
+        );
         assert_eq!(first.loc.x, fifth.loc.x);
         assert_eq!(fifth.loc.y, first.loc.y + first.size.h);
 
@@ -1839,7 +1857,13 @@ mod tests {
         let single = control_rect(CONTROLS.len(), size(), 1., &settings, ScreenshotTool::Draw);
         assert_eq!(single.size, first.size);
         // A swatch index outside the palette produces an empty rect.
-        let outside = control_rect(CONTROLS.len() + 1, size(), 1., &settings, ScreenshotTool::Draw);
+        let outside = control_rect(
+            CONTROLS.len() + 1,
+            size(),
+            1.,
+            &settings,
+            ScreenshotTool::Draw,
+        );
         assert_eq!(outside.size, Size::from((0, 0)));
     }
 
@@ -1881,16 +1905,20 @@ mod tests {
 
     #[test]
     fn apply_settings_preserves_session_and_fixes_swatch_focus() {
-        let settings = ScreenshotConfig::default();
-        let palette_color = rgb8(settings.brush.palette[0]);
+        let settings = niri_config::Config::parse_mem(
+            r##"screenshot { brush { palette "#010203" "#040506"; }; }"##,
+        )
+        .unwrap()
+        .screenshot;
         let mut editor = Editor::new(settings.clone(), ScreenshotTool::Draw);
         editor.color = ScreenshotColor::new(1, 2, 3);
         editor.width = 17;
-        // Focus a swatch color that is not in the default palette.
-        editor.focus = Some(Control::Color(editor.color));
+        // Removing the focused swatch returns focus to its tool.
+        editor.focus = Some(Control::Color(0));
 
         let mut updated = settings;
         updated.toolbar.position = ScreenshotToolbarPosition::Bottom;
+        let removed = updated.brush.palette.remove(0);
         editor.apply_settings(updated);
 
         // Session state survives; the swatch missing from the palette drops
@@ -1900,11 +1928,11 @@ mod tests {
         assert_eq!(editor.tool, ScreenshotTool::Draw);
         assert_eq!(editor.focus, Some(Control::Tool(ScreenshotTool::Draw)));
 
-        // A focused swatch still present in the palette keeps its focus.
-        editor.focus = Some(Control::Color(palette_color));
+        // A surviving color follows its new position after a palette reorder.
+        editor.focus = Some(Control::Color(0));
         let mut updated = editor.settings.clone();
-        updated.toolbar.align = ScreenshotToolbarAlign::Left;
+        updated.brush.palette.insert(0, removed);
         editor.apply_settings(updated);
-        assert_eq!(editor.focus, Some(Control::Color(palette_color)));
+        assert_eq!(editor.focus, Some(Control::Color(1)));
     }
 }

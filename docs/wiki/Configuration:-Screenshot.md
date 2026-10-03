@@ -162,7 +162,7 @@ Dimming affects only the frozen background outside the selected region, includin
 | `open-palette-on-click`   | `true`                   | Repeated activation of the selected colored tool toggles its palette. |
 | `close-palette-on-select` | `true`                   | Close the palette after selecting a color.                            |
 
-Palette numbering starts at 1: `screenshot-palette-color 1` selects the first configured swatch. The initial `color` need not occur in the palette. Colors and widths chosen in the editor affect new strokes, not existing drawings.
+Palette numbering starts at 1: `screenshot-palette-color 1` selects the first configured swatch. Repeated RGB values remain separate swatches for pointer and keyboard navigation. The initial `color` need not occur in the palette. Colors and widths chosen in the editor affect new strokes, not existing drawings.
 
 `brush`, `arrow` and `rectangle` accept the same settings above, but store independent colors, widths and palettes; they do not inherit custom brush settings. Each button has its own bottom color stripe and a width number in the top-right corner. The brush cursor outlines its actual captured-pixel diameter. Selecting a different tool never opens its palette; activating the selected tool again toggles its palette only when `open-palette-on-click` is enabled. `screenshot-tool` never opens it. The shared palette edits only the selected colored tool.
 
@@ -338,6 +338,7 @@ Configuration reload updates the open editor's theme, geometry and palette. Duri
 - Reload preserves the current tool, each tool's color and width, crop and undo/redo history.
 - `brush`, `arrow` and `rectangle` colors/widths and `magnifier.initial-zoom` are defaults for the next opening; `remember-selection` also affects the next opening.
 - A selected color remains selected even if removed from the palette; it simply has no highlighted swatch.
+- Keyboard focus keeps the same matching swatch when possible, follows its color if the palette is reordered, and returns to the tool button if that color is removed.
 - A lower `max-zoom` clamps the current zoom. Magnifier thresholds and appearance update with the applied configuration.
 - Changing configured `blur.strength` updates the current strength for new blur gestures only. Unrelated reloads preserve the strength chosen in the editor.
 

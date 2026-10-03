@@ -1088,10 +1088,10 @@ impl ScreenshotUi {
                 } else {
                     Control::Copy
                 }),
-                Action::ScreenshotPaletteColor { index } => editor
-                    .palette()
-                    .get(usize::from(*index).saturating_sub(1))
-                    .map(|c| Control::Color(rgb_color(*c))),
+                Action::ScreenshotPaletteColor { index } => {
+                    let index = usize::from(*index).saturating_sub(1);
+                    (index < editor.palette().len()).then_some(Control::Color(index))
+                }
                 _ => None,
             };
             if let Some(control) = control {
@@ -1241,12 +1241,8 @@ impl ScreenshotUi {
             Action::ScreenshotPaletteColor { index } => {
                 if let Self::Open { editor, .. } = self {
                     if editor.palette_open {
-                        if let Some(color) =
-                            editor.palette().get(usize::from(*index).saturating_sub(1))
-                        {
-                            let color = rgb_color(*color);
-                            self.activate_control(Control::Color(color));
-                        }
+                        let index = usize::from(*index).saturating_sub(1);
+                        self.activate_control(Control::Color(index));
                     }
                 }
             }
@@ -1364,13 +1360,10 @@ impl ScreenshotUi {
         else {
             return;
         };
-        let controls = screenshot_editor::CONTROLS.iter().copied().chain(
-            editor
-                .palette()
-                .iter()
-                .copied()
-                .map(|color| Control::Color(rgb_color(color))),
-        );
+        let controls = screenshot_editor::CONTROLS
+            .iter()
+            .copied()
+            .chain((0..editor.palette().len()).map(Control::Color));
         let enabled = |control: &Control| {
             screenshot_editor::control_enabled(*control, editor, interaction)
                 && (!matches!(control, Control::Color(_)) || editor.palette_open)
@@ -1397,15 +1390,12 @@ impl ScreenshotUi {
                 editor.palette_open = !editor.palette_open;
                 if editor.focus.is_some() {
                     editor.focus = Some(if editor.palette_open {
-                        if editor
+                        editor
                             .palette()
                             .iter()
-                            .any(|c| rgb_color(*c) == editor.tool_color(editor.tool))
-                        {
-                            Control::Color(editor.tool_color(editor.tool))
-                        } else {
-                            Control::Tool(editor.tool)
-                        }
+                            .position(|c| rgb_color(*c) == editor.tool_color(editor.tool))
+                            .map(Control::Color)
+                            .unwrap_or(Control::Tool(editor.tool))
                     } else {
                         Control::Tool(editor.tool)
                     });
@@ -1446,12 +1436,13 @@ impl ScreenshotUi {
                     self.toggle_palette();
                 }
             }
-            Control::Color(color) => {
+            Control::Color(index) => {
+                let color = rgb_color(editor.palette()[index]);
                 if editor.tool_settings(editor.tool).close_palette_on_select {
                     editor.palette_open = false;
                     editor.focus = editor.focus.map(|_| Control::Tool(editor.tool));
                 } else {
-                    editor.focus = editor.focus.map(|_| Control::Color(color));
+                    editor.focus = editor.focus.map(|_| control);
                 }
                 if let Some(tool) = editor.color_tool() {
                     editor.set_tool_color(tool, color);
