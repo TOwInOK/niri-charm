@@ -1707,3 +1707,38 @@ fn screenshot_editor_closed_command_preserves_overview_touch_grab() {
     f.niri_state().do_action(Action::ToggleOverview, false);
     assert!(!touch.is_grabbed());
 }
+
+#[test]
+fn screenshot_editor_tooltip_is_visible_on_translucent_toolbar() {
+    let mut f = set_up(&format!(
+        r#"{CONFIG}
+        screenshot {{ toolbar {{ opacity 0.95; }}; }}"#
+    ));
+    let output = f.niri_output(1);
+    open_ui(&mut f);
+    f.niri().screenshot_ui.set_tool(Tool::Draw);
+    hover_control(&mut f, &output, Control::Tool(Tool::Draw));
+    let (size, with_tip) = render_output_rgba(f.niri_state(), &output);
+
+    f.niri().config.borrow_mut().screenshot.tooltips.enabled = false;
+    f.niri()
+        .screenshot_ui
+        .refresh_config(niri_config::ModKey::Super);
+    let (_, without_tip) = render_output_rgba(f.niri_state(), &output);
+    let changed = changed_rect(size, &without_tip, &with_tip).expect("visible tooltip");
+    let (size, scale, _) = f.niri().screenshot_ui.output_size(&output).unwrap();
+    let index = screenshot_editor::CONTROLS
+        .iter()
+        .position(|c| *c == Control::Tool(Tool::Draw))
+        .unwrap();
+    let button = screenshot_editor::control_rect(
+        index,
+        size,
+        scale,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
+    assert!(changed.loc.y >= button.loc.y + button.size.h);
+    assert!(changed.loc.y + changed.size.h <= button.loc.y + button.size.h + 64);
+    assert!(pixels_equal_in(size, &without_tip, &with_tip, button));
+}

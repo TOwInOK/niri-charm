@@ -1376,9 +1376,9 @@ impl Toolbar {
         scale: f64,
         alpha: f32,
     ) -> Result<PrimaryGpuTextureRenderElement> {
-        // The tooltip contributes pixels only when the element is opaque; while
-        // fading it collapses to `Tip::None` so the same texture is reused.
-        let tip = if alpha >= 1. {
+        // Show the tooltip at the configured resting opacity. Hide it while
+        // fading so intermediate alpha values can reuse the same texture.
+        let tip = if alpha > 0. && alpha >= editor.settings.toolbar.opacity as f32 {
             match state.focus.or(state.hover) {
                 Some(control) if editor.settings.tooltips.enabled => Tip::Control(control),
                 _ if state.error => Tip::Error,

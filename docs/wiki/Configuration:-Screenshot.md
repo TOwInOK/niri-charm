@@ -138,7 +138,7 @@ The palette and tooltips open toward the center of the screen: below a top toolb
 | `font`      | `"Sans"` | Font description.                                                   |
 | `font-size` | `11`     | Positive font size.                                                 |
 
-Shortcut labels reflect the configured bindings rather than a separate set of tooltip shortcuts.
+Shortcut labels reflect the configured bindings rather than a separate set of tooltip shortcuts. Tooltips appear at the configured resting opacity, including on a translucent toolbar; they stay hidden while the toolbar fades.
 
 ### Selection
 
