@@ -131,7 +131,7 @@ use crate::dbus::freedesktop_login1::Login1ToNiri;
 #[cfg(feature = "dbus")]
 use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri, NiriToIntrospect};
 #[cfg(feature = "dbus")]
-use crate::dbus::gnome_shell_screenshot::{NiriToScreenshot, ScreenshotToNiri};
+use crate::dbus::gnome_shell_screenshot::ScreenshotToNiri;
 use crate::frame_clock::FrameClock;
 use crate::handlers::image_copy_capture::{
     self as image_copy_capture_impl, CaptureBuffer, ImageCopyCursorSession, ImageCopySession,
@@ -186,6 +186,7 @@ use crate::ui::screen_transition::{self, ScreenTransition};
 use crate::ui::screenshot_ui::{OutputScreenshot, ScreenshotUi, ScreenshotUiRenderElement};
 use crate::ui::zoom_debug;
 use crate::utils::scale::{closest_representable_scale, guess_monitor_scale};
+use crate::utils::screenshot::{ExportPlan, ExportRequest};
 use crate::utils::spawning::{CHILD_DISPLAY, CHILD_ENV};
 use crate::utils::vblank_throttle::VBlankThrottle;
 use crate::utils::view::ViewportTransform;
@@ -193,8 +194,8 @@ use crate::utils::watcher::Watcher;
 use crate::utils::xwayland::satellite::Satellite;
 use crate::utils::{
     center, center_f64, expand_home, get_monotonic_time, ipc_transform_to_smithay, is_mapped,
-    logical_output, make_screenshot_path, output_matches_name, output_size, panel_orientation,
-    send_scale_transform, winit_scale, write_png_rgba8, xwayland,
+    logical_output, output_matches_name, output_size, panel_orientation, send_scale_transform,
+    winit_scale, write_png_rgba8, xwayland,
 };
 use crate::window::mapped::MappedId;
 use crate::window::{InitialConfigureState, Mapped, ResolvedWindowRules, Unmapped, WindowRef};
@@ -1783,6 +1784,9 @@ impl State {
 
         // Release the borrow.
         drop(old_config);
+        self.niri
+            .screenshot_ui
+            .refresh_config(self.backend.mod_key(&self.niri.config.borrow()));
 
         if zoom_max_decreased {
             let max_zoom = self.niri.config.borrow().zoom.max_zoom;
@@ -2132,7 +2136,12 @@ impl State {
         self.niri.output_management_state.notify_changes(new_config);
     }
 
-    pub fn open_screenshot_ui(&mut self, show_pointer: bool, path: Option<String>) {
+    pub fn open_screenshot_ui(
+        &mut self,
+        show_pointer: bool,
+        path: Option<String>,
+        tool: niri_ipc::ScreenshotTool,
+    ) {
         if self.niri.is_locked() || self.niri.screenshot_ui.is_open() {
             return;
         }
@@ -2169,11 +2178,15 @@ impl State {
             tool.unset_grab(self, SERIAL_COUNTER.next_serial(), time);
         }
 
-        self.backend.with_primary_renderer(|renderer| {
-            self.niri
-                .screenshot_ui
-                .open(renderer, screenshots, default_output, show_pointer, path)
-        });
+        let mod_key = self.backend.mod_key(&self.niri.config.borrow());
+        self.niri.screenshot_ui.open(
+            screenshots,
+            default_output,
+            show_pointer,
+            path,
+            tool,
+            mod_key,
+        );
 
         self.niri
             .cursor_manager
@@ -2197,8 +2210,8 @@ impl State {
         self.niri.queue_redraw_all();
     }
 
-    pub fn confirm_screenshot(&mut self, write_to_disk: bool) {
-        if !self.niri.screenshot_ui.is_open() {
+    pub fn confirm_screenshot(&mut self, mut request: ExportRequest) {
+        if !self.niri.screenshot_ui.is_open() || self.niri.screenshot_ui.has_active_gesture() {
             return;
         }
         let Some(result) = self
@@ -2215,11 +2228,15 @@ impl State {
                 return;
             }
         };
-        let ScreenshotUi::Open { path, .. } = &mut self.niri.screenshot_ui else {
+        let ScreenshotUi::Open { path, .. } = &self.niri.screenshot_ui else {
             return;
         };
-        let path = path.take();
-        if let Err(err) = self.niri.save_screenshot(size, pixels, write_to_disk, path) {
+        if let ExportRequest::Save { path: target, .. } = &mut request {
+            if target.is_none() {
+                *target = path.as_ref().map(PathBuf::from);
+            }
+        }
+        if let Err(err) = self.niri.save_screenshot(size, pixels, request) {
             warn!("error saving screenshot: {err:?}");
             return;
         }
@@ -2280,14 +2297,13 @@ impl State {
     pub fn set_dynamic_cast_target(&mut self, _target: CastTarget) {}
 
     #[cfg(feature = "dbus")]
-    pub fn on_screen_shot_msg(
-        &mut self,
-        to_screenshot: &async_channel::Sender<NiriToScreenshot>,
-        msg: ScreenshotToNiri,
-    ) {
+    pub fn on_screen_shot_msg(&mut self, msg: ScreenshotToNiri) {
         match msg {
-            ScreenshotToNiri::TakeScreenshot { include_cursor } => {
-                self.handle_take_screenshot(to_screenshot, include_cursor);
+            ScreenshotToNiri::TakeScreenshot {
+                include_cursor,
+                reply,
+            } => {
+                self.handle_take_screenshot(include_cursor, reply);
             }
             ScreenshotToNiri::PickColor(tx) => {
                 self.handle_pick_color(tx);
@@ -2298,40 +2314,33 @@ impl State {
     #[cfg(feature = "dbus")]
     fn handle_take_screenshot(
         &mut self,
-        to_screenshot: &async_channel::Sender<NiriToScreenshot>,
         include_cursor: bool,
+        reply: async_channel::Sender<anyhow::Result<PathBuf>>,
     ) {
         let _span = tracy_client::span!("TakeScreenshot");
 
         let rv = self.backend.with_primary_renderer(|renderer| {
             let on_done = {
-                let to_screenshot = to_screenshot.clone();
-                move |path| {
-                    let msg = NiriToScreenshot::ScreenshotResult(Some(path));
-                    if let Err(err) = to_screenshot.send_blocking(msg) {
-                        warn!("error sending path to screenshot: {err:?}");
+                let reply = reply.clone();
+                move |res| {
+                    if let Err(err) = reply.send_blocking(res) {
+                        warn!("error sending screenshot result: {err:?}");
                     }
                 }
             };
 
-            let res = self
-                .niri
-                .screenshot_all_outputs(renderer, include_cursor, on_done);
-
-            if let Err(err) = res {
-                warn!("error taking a screenshot: {err:?}");
-
-                let msg = NiriToScreenshot::ScreenshotResult(None);
-                if let Err(err) = to_screenshot.send_blocking(msg) {
-                    warn!("error sending None to screenshot: {err:?}");
-                }
-            }
+            self.niri
+                .screenshot_all_outputs(renderer, include_cursor, on_done)
         });
 
-        if rv.is_none() {
-            let msg = NiriToScreenshot::ScreenshotResult(None);
-            if let Err(err) = to_screenshot.send_blocking(msg) {
-                warn!("error sending None to screenshot: {err:?}");
+        let res = match rv {
+            Some(res) => res,
+            None => Err(anyhow::anyhow!("no renderer for screenshot")),
+        };
+        if let Err(err) = res {
+            warn!("error taking a screenshot: {err:?}");
+            if let Err(err) = reply.send_blocking(Err(err)) {
+                warn!("error sending screenshot error: {err:?}");
             }
         }
     }
@@ -6686,8 +6695,20 @@ impl Niri {
             elements,
         )?;
 
-        self.save_screenshot(size, pixels, write_to_disk, path)
-            .context("error saving screenshot")
+        self.save_screenshot(
+            size,
+            pixels,
+            if write_to_disk {
+                ExportRequest::Save {
+                    path: path.map(PathBuf::from),
+                    format: None,
+                    quality: None,
+                }
+            } else {
+                ExportRequest::ClipboardOnly
+            },
+        )
+        .context("error saving screenshot")
     }
 
     pub fn screenshot_window(
@@ -6754,31 +6775,29 @@ impl Niri {
             elements,
         )?;
 
-        self.save_screenshot(geo.size, pixels, write_to_disk, path)
-            .context("error saving screenshot")
+        self.save_screenshot(
+            geo.size,
+            pixels,
+            if write_to_disk {
+                ExportRequest::Save {
+                    path: path.map(PathBuf::from),
+                    format: None,
+                    quality: None,
+                }
+            } else {
+                ExportRequest::ClipboardOnly
+            },
+        )
+        .context("error saving screenshot")
     }
 
     pub fn save_screenshot(
         &self,
         size: Size<i32, Physical>,
         pixels: Vec<u8>,
-        write_to_disk: bool,
-        path_arg: Option<String>,
+        request: ExportRequest,
     ) -> anyhow::Result<()> {
-        let path = write_to_disk
-            .then(|| {
-                // When given an explicit path, don't try to strftime it or create parents.
-                path_arg.map(|p| (PathBuf::from(p), false)).or_else(|| {
-                    match make_screenshot_path(&self.config.borrow()) {
-                        Ok(path) => path.map(|p| (p, true)),
-                        Err(err) => {
-                            warn!("error making screenshot path: {err:?}");
-                            None
-                        }
-                    }
-                })
-            })
-            .flatten();
+        let plan = ExportPlan::resolve(request, &self.config.borrow())?;
 
         // Prepare to set the encoded image as our clipboard selection. This must be done from the
         // main thread.
@@ -6823,24 +6842,9 @@ impl Niri {
 
             let mut image_path = None;
 
-            if let Some((path, create_parent)) = path {
-                debug!("saving screenshot to {path:?}");
-
-                if create_parent {
-                    if let Some(parent) = path.parent() {
-                        // Relative paths with one component, i.e. "test.png", have Some("") parent.
-                        if !parent.as_os_str().is_empty() {
-                            if let Err(err) = std::fs::create_dir_all(parent) {
-                                if err.kind() != std::io::ErrorKind::AlreadyExists {
-                                    warn!("error creating screenshot directory: {err:?}");
-                                }
-                            }
-                        }
-                    }
-                }
-
-                match std::fs::write(&path, buf) {
-                    Ok(()) => image_path = Some(path),
+            if let Some(file) = plan.into_file() {
+                match file.write(size.w as u32, size.h as u32, &pixels, &buf) {
+                    Ok(path) => image_path = Some(path),
                     Err(err) => {
                         warn!("error saving screenshot image: {err:?}");
                     }
@@ -6870,7 +6874,7 @@ impl Niri {
         &mut self,
         renderer: &mut GlesRenderer,
         include_pointer: bool,
-        on_done: impl FnOnce(PathBuf) + Send + 'static,
+        on_done: impl FnOnce(anyhow::Result<PathBuf>) + Send + 'static,
     ) -> anyhow::Result<()> {
         use smithay::backend::renderer::{Bind as _, ExportMem as _};
 
@@ -6960,32 +6964,70 @@ impl Niri {
             .context("error mapping texture")?;
         let pixels = copy.to_vec();
 
-        let path = make_screenshot_path(&self.config.borrow())
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| {
-                let mut path = env::temp_dir();
-                path.push("screenshot.png");
-                path
-            });
-        debug!("saving screenshot to {path:?}");
+        // Encode and save the screenshot in a thread as it's slow. The D-Bus
+        // API must return a path, so fall back to a unique temporary file when
+        // saving to disk is disabled.
+        let path = crate::utils::make_screenshot_path(
+            &self.config.borrow(),
+            niri_ipc::ScreenshotFormat::Png,
+        )
+        .context("error making screenshot path")?;
 
         thread::spawn(move || {
-            let file = match std::fs::File::create(&path) {
-                Ok(file) => file,
+            fn create_output_file(
+                path: Option<PathBuf>,
+            ) -> anyhow::Result<(std::fs::File, PathBuf)> {
+                match path {
+                    Some(path) => {
+                        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                            std::fs::create_dir_all(parent)
+                                .context("error creating screenshot directory")?;
+                        }
+                        let file = std::fs::File::create(&path)
+                            .context("error creating screenshot file")?;
+                        Ok((file, path))
+                    }
+                    None => loop {
+                        let name = format!("niri-screenshot-{:x}.png", fastrand::u32(..));
+                        let path = env::temp_dir().join(name);
+                        match std::fs::File::create_new(&path) {
+                            Ok(file) => return Ok((file, path)),
+                            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                            Err(err) => {
+                                return Err(err).context("error creating screenshot file");
+                            }
+                        }
+                    },
+                }
+            }
+
+            // Track whether the destination is a fallback temporary file so
+            // that only it gets removed when encoding fails.
+            let is_temp = path.is_none();
+
+            let (file, path) = match create_output_file(path) {
+                Ok(rv) => rv,
                 Err(err) => {
-                    warn!("error creating file: {err:?}");
+                    on_done(Err(err));
                     return;
                 }
             };
 
             let w = std::io::BufWriter::new(file);
-            if let Err(err) = write_png_rgba8(w, geo.size.w as u32, geo.size.h as u32, &pixels) {
-                warn!("error encoding screenshot image: {err:?}");
-                return;
+            match write_png_rgba8(w, geo.size.w as u32, geo.size.h as u32, &pixels)
+                .context("error encoding screenshot image")
+            {
+                Ok(()) => {
+                    debug!("saved screenshot to {path:?}");
+                    on_done(Ok(path));
+                }
+                Err(err) => {
+                    if is_temp {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                    on_done(Err(err));
+                }
             }
-
-            on_done(path);
         });
 
         Ok(())

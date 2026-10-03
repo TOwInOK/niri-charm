@@ -2,13 +2,14 @@
   <h1>niri-sweaters</h1>
   <p><strong>Your windows. In sweaters.</strong></p>
   <img src="docs/assets/knit-hero.webp" alt="Zed, Oh My Pi, Helix, and Obsidian windows with knitted borders" width="800">
-  <p>A <a href="https://github.com/niri-wm/niri">niri</a> fork with knitted window borders and desktop zoom.<br>Choose patterns and colours for each app, magnify your desktop, and select regions for recording.</p>
+  <p>A <a href="https://github.com/niri-wm/niri">niri</a> fork with knitted window borders, desktop zoom, and a built-in screenshot editor.<br>Dress each app in its own colours, magnify your desktop, annotate screenshots, and select regions for recording.</p>
   <p>
     <a href="#features">Features</a> ·
     <a href="#patterns">Patterns</a> ·
     <a href="#in-action">In action</a> ·
     <a href="#install">Install</a> ·
     <a href="#configure">Configure</a> ·
+    <a href="#screenshot-editor">Screenshot editor</a> ·
     <a href="#region-ipc">Region IPC</a>
   </p>
 </div>
@@ -17,6 +18,7 @@
 
 - **[Knitted borders](#knit).** Six patterns, per-app colours, and live config reloads; borders follow window geometry and animations.
 - **[Zoom](#zoom).** Magnify with keyboard, mouse wheel, or touchpad pinch; follow the pointer, lock the view, or hold a key for temporary zoom. Transition smoothly into Overview.
+- **[Screenshot editor](#screenshot-editor).** Crop, draw freehand, add arrows and rectangles, and blur regions. Independent tool colours and widths, undo/redo, axis guides, and a pixel magnifier; export PNG, WebP or AVIF and copy as PNG.
 - **[Region IPC](#region-ipc).** Select an area for its coordinates and display a recording frame on one monitor without including the frame in captures.
 - **[Separate session](#install).** Run alongside stock Niri with its own config.
 
@@ -169,6 +171,57 @@ binds {
 ```
 
 [Zoom controls](docs/wiki/Accessibility.md#desktop-zoom) · [All zoom settings](docs/wiki/Configuration:-Miscellaneous.md#zoom) · [Key bindings](docs/wiki/Configuration:-Key-Bindings.md#zoom)
+
+### Screenshot editor
+
+Annotate a frozen desktop frame without opening another app. Draw, Arrow and Rectangle have independent colours, widths and palettes. Undo/redo covers drawings, shapes and blur regions; moving the crop does not move your annotations.
+
+Appearance belongs in the root `screenshot` block; shortcuts belong in `binds`. For example:
+
+```kdl
+screenshot {
+    brush { color "#ff0000"; width 4; }
+    arrow { color "#00c040"; width 8; }
+    rectangle { color "#0080ff"; width 6; }
+    axes { color "#80c7ff"; opacity 0.6; }
+    blur { strength "medium"; }
+}
+```
+
+Merge these shortcuts into your existing `binds` block. Editor-only shortcuts pass through when the editor is closed:
+
+```kdl
+binds {
+    Print { screenshot; }
+    V { screenshot-tool "select"; }
+    B { screenshot-tool "draw"; }
+    A { screenshot-tool "arrow"; }
+    D { screenshot-tool "rectangle"; }
+    R { screenshot-tool "blur"; }
+    C { screenshot-toggle-palette; }
+    Ctrl+Z { screenshot-undo; }
+    Ctrl+Shift+Z { screenshot-redo; }
+    X { screenshot-toggle-axes; }
+    Shift_L repeat=false { screenshot-toggle-axes hold=true; }
+    Space repeat=false { screenshot-move-selection-hold; }
+    Tab { screenshot-focus-next; }
+    Shift+Tab { screenshot-focus-previous; }
+    WheelScrollUp { screenshot-context "+1"; }
+    WheelScrollDown { screenshot-context "-1"; }
+    Ctrl+C { confirm-screenshot write-to-disk=false; }
+    Ctrl+S { confirm-screenshot; }
+    Return { screenshot-confirm; }
+    Escape { screenshot-cancel; }
+}
+```
+
+The wheel adjusts the keyboard-focused tool first, otherwise the tool under the pointer; over the canvas it changes magnifier zoom. Other controls block the adjustment, and moving the pointer clears keyboard focus. The selected drawing tool does not change. Hold Shift for axis-constrained drawing, or Space to move the crop with the pointer.
+
+Enter activates the focused control, or saves and copies when nothing is focused. Ctrl+S always requests export; Escape closes the palette, cancels a gesture, then closes the editor. Unfinished gestures are not exported.
+
+Save as PNG, WebP or AVIF using the root `screenshot-format` setting or a per-export override such as `confirm-screenshot format="webp" quality=85`. The clipboard stays PNG. Toolbar, guides, crop frame and magnifier never appear in the export. Blur affects the frozen image beneath annotations; **it is not a guarantee that sensitive information cannot be recovered**.
+
+[All screenshot settings](docs/wiki/Configuration:-Screenshot.md) · [Full demo config and shortcuts](docs/wiki/Configuration:-Screenshot.md#full-feature-demo-configuration) · [Demo config](resources/knit-desktop.kdl) · [Architecture and IPC](docs/hiw/screenshot.md)
 
 ### Region IPC
 

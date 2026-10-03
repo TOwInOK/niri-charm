@@ -1,9 +1,14 @@
 // Run from an existing Wayland session:
 // ./target/debug/niri --config resources/knit-desktop.kdl
 // Launches Zed, Obsidian and two blank Ghostty windows as a 2-by-2 grid.
-// Alt+U opens the screenshot editor: V selects, B draws, R blurs, C opens the palette.
-// Alt+Z undoes, Alt+Shift+Z redoes; these binds pass through outside the editor.
-// Enter/Ctrl+S save, Ctrl+C only copies, Space+drag moves the crop, Escape cancels.
+// Alt+U/Print opens the editor; Alt+Shift+U opens Draw without the captured pointer.
+// V/B/A/D/R: Select/Draw/Arrow/Rectangle/Blur; C: palette; 1-7: swatches.
+// Tab/Shift+Tab focuses controls; +/- and wheel adjust context, Ctrl+wheel zooms the lens.
+// X toggles axes; hold left Shift or right mouse for axes; Space+drag moves the crop.
+// Ctrl+Z undoes; Ctrl+Shift+Z/Ctrl+Y redoes. Editor binds pass through outside the editor.
+// Enter activates focus, otherwise saves/copies; Ctrl+C copies; Ctrl+S saves/copies.
+// Escape steps back; Ctrl+Escape discards. Ctrl+Alt+P/W/A exports PNG/WebP/AVIF.
+// F1-F12 below exercise explicit setters without changing the selected tool.
 
 prefer-no-csd
 input {
@@ -173,20 +178,94 @@ binds {
     Alt+Shift+E { quit skip-confirmation=true; }
     Alt+Space { toggle-window-floating; }
 
-    Ctrl+Z repeat=false { zoom 2.0; }
+    Ctrl+Alt+Z repeat=false { zoom 2.0; }
     Ctrl+X repeat=false { zoom 4.0 hold=true; }
 
-    Ctrl+WheelScrollUp   { zoom-in; }
-    Ctrl+WheelScrollDown { zoom-out; }
+    Ctrl+Alt+WheelScrollUp { zoom-in; }
+    Ctrl+Alt+WheelScrollDown { zoom-out; }
 
     Alt+W repeat=false { toggle-overview; }
 
 
     Alt+C repeat=false { zoom-lock ; }
 
-    Alt+U repeat=false hotkey-overlay-title="Screenshot editor: draw / blur" { screenshot; }
-    Alt+Z repeat=false hotkey-overlay-title="Screenshot: undo" { screenshot-undo; }
-    Alt+Shift+Z repeat=false hotkey-overlay-title="Screenshot: redo" { screenshot-redo; }
+    Alt+U repeat=false hotkey-overlay-title="Screenshot editor: select / draw / arrow / rectangle / blur" { screenshot; }
+    Alt+Shift+U repeat=false { screenshot tool="draw" show-pointer=false; }
+    Print repeat=false { screenshot; }
+    Ctrl+Print repeat=false { screenshot-screen; }
+    Alt+Print repeat=false { screenshot-window; }
+
+    // Screenshot editor binds, active only while the editor is open.
+    V { screenshot-tool "select"; }
+    B { screenshot-tool "draw"; }
+    A { screenshot-tool "arrow"; }
+    D { screenshot-tool "rectangle"; }
+    R { screenshot-tool "blur"; }
+    C { screenshot-toggle-palette; }
+    "1" { screenshot-palette-color 1; }
+    "2" { screenshot-palette-color 2; }
+    "3" { screenshot-palette-color 3; }
+    "4" { screenshot-palette-color 4; }
+    "5" { screenshot-palette-color 5; }
+    "6" { screenshot-palette-color 6; }
+    "7" { screenshot-palette-color 7; }
+    // Keyboard-focused tool first, otherwise the tool under the pointer: stroke width or
+    // strength for Blur; no-op over Select and other UI.
+    Minus { screenshot-context "-1"; }
+    Equal { screenshot-context "+1"; }
+    X repeat=false { screenshot-toggle-axes; }
+    Shift_L repeat=false { screenshot-toggle-axes hold=true; }
+    MouseRight repeat=false { screenshot-toggle-axes hold=true; }
+    Ctrl+Z { screenshot-undo; }
+    Ctrl+Shift+Z { screenshot-redo; }
+    Ctrl+Y { screenshot-redo; }
+    P { screenshot-toggle-pointer; }
+    Ctrl+C { confirm-screenshot write-to-disk=false; }
+    Ctrl+S { confirm-screenshot write-to-disk=true; }
+    // One-shot format overrides; clipboard stays PNG. WebP tests lossy encoding.
+    Ctrl+Alt+P { confirm-screenshot format="png"; }
+    Ctrl+Alt+W { confirm-screenshot format="webp" quality=85; }
+    Ctrl+Alt+A { confirm-screenshot format="avif" quality=90; }
+    Return { screenshot-confirm; }
+    Escape { screenshot-cancel; }
+    Ctrl+Escape { cancel-screenshot; }
+    Left  { screenshot-move-selection x=-1 y=0; }
+    Right { screenshot-move-selection x=1 y=0; }
+    Up    { screenshot-move-selection x=0 y=-1; }
+    Down  { screenshot-move-selection x=0 y=1; }
+    Ctrl+Left  { screenshot-move-selection x=-20 y=0; }
+    Ctrl+Right { screenshot-move-selection x=20 y=0; }
+    Ctrl+Up    { screenshot-move-selection x=0 y=-20; }
+    Ctrl+Down  { screenshot-move-selection x=0 y=20; }
+    Shift+Left  { screenshot-resize-selection width=-1 height=0; }
+    Shift+Right { screenshot-resize-selection width=1 height=0; }
+    Shift+Up    { screenshot-resize-selection width=0 height=-1; }
+    Shift+Down  { screenshot-resize-selection width=0 height=1; }
+    Space repeat=false { screenshot-move-selection-hold; }
+    // Keyboard focus takes priority; otherwise tool parameter under the pointer,
+    // magnifier zoom over the canvas.
+    WheelScrollUp   { screenshot-context "+1"; }
+    WheelScrollDown { screenshot-context "-1"; }
+    // Explicit lens zoom bypasses keyboard focus and hover.
+    Ctrl+WheelScrollUp { screenshot-magnifier-zoom "+1"; }
+    Ctrl+WheelScrollDown { screenshot-magnifier-zoom "-1"; }
+    Tab { screenshot-focus-next; }
+    Shift+Tab { screenshot-focus-previous; }
+
+    // Explicit setters: also test colors while their tool is inactive.
+    F1 { screenshot-set-palette true; }
+    F2 { screenshot-set-palette false; }
+    F3 { screenshot-set-pointer true; }
+    F4 { screenshot-set-pointer false; }
+    F5 { screenshot-set-axes true; }
+    F6 { screenshot-set-axes false; }
+    F7 { screenshot-brush-color "#ff8000"; }
+    F8 { screenshot-arrow-color "#00c040"; }
+    F9 { screenshot-rectangle-color "#0080ff"; }
+    // Absolute context: width 8, Blur clamps to 3, canvas zoom becomes 8.
+    F10 { screenshot-context 8; }
+    F11 { screenshot-magnifier-zoom 1; }
+    F12 { screenshot-magnifier-zoom 32; }
 }
 
 zoom {
@@ -198,10 +277,10 @@ zoom {
     // sampling "nearest"
     sampling "auto" threshold=4.0
 
-    debug {
-        deadzone true
-        focal-point true
-    }
+    // debug {
+    //     deadzone true
+    //     focal-point true
+    // }
 
     follow-min-speed 600
     follow-max-speed 6900
@@ -210,5 +289,95 @@ zoom {
 recent-windows {
     binds {
         Ctrl+Alt+Tab { next-window; }
+    }
+}
+
+// Ctrl+S uses PNG; export shortcuts override only that capture.
+screenshot-format "png"
+
+screenshot {
+    toolbar {
+        position "bottom"
+        align "left"
+        margin bottom=20 left=20
+        button-size 32
+        icon-size 20
+        background-color "#1e1e2e"
+        border-width 2
+        accent-color "#cba6f7"
+        icon-color "#ffffffeb"
+        disabled-icon-color "#ffffff4d"
+        // hover-color "#ffffff1f"
+        // pressed-color "#00000059"
+        opacity 1.0
+        drag-opacity 0.2
+    }
+
+    tooltips {
+        enabled true
+        font "Mono"
+        font-size 12
+    }
+
+    selection {
+        border-color "#cba6f7"
+        border-width 2
+        dim-color "#cba6f7"
+        dim-opacity 0.2
+        remember-selection true
+    }
+
+    brush {
+        width 4
+        color "#ff0000"
+        palette "#ff0000" "#ff8000" "#ffe000" "#00c040" "#0080ff" "#ffffff" "#000000"
+        open-palette-on-click true
+        close-palette-on-select true
+    }
+
+    // Distinct widths/colors/palettes expose independent tool state.
+    arrow {
+        width 8
+        color "#00c040"
+        palette "#00c040" "#80c7ff" "#cba6f7" "#ffe000" "#ff8000" "#ffffff" "#000000"
+        open-palette-on-click true
+        close-palette-on-select true
+    }
+
+    rectangle {
+        width 6
+        color "#0080ff"
+        palette "#0080ff" "#cba6f7" "#ff0000" "#00c040" "#ffe000" "#ffffff" "#000000"
+        // C/F1 opens the palette; repeated tool clicks do not.
+        open-palette-on-click true
+        close-palette-on-select true
+    }
+
+    axes {
+        color "#80c7ff"
+        opacity 0.6
+        width 1
+        dash-length 6
+        dash-gap 4
+        switch-threshold 8
+    }
+
+    blur {
+        strength "low"
+    }
+
+    magnifier {
+        diameter 192
+        pointer-gap 16
+        initial-zoom 1
+        show-from 2
+        max-zoom 32
+        grid true
+        grid-from 8
+        cross-highlight true
+        cross-highlight-color "#cba6f7"
+        border-color "#cba6f7"
+        border-width 4
+        grid-color "#0000008c"
     }
 }

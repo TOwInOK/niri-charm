@@ -4,6 +4,8 @@ pub mod hotkey_overlay;
 pub mod mru;
 pub mod region;
 pub mod screen_transition;
+pub mod screenshot_axes;
 pub mod screenshot_editor;
+pub mod screenshot_guides;
 pub mod screenshot_ui;
 pub mod zoom_debug;

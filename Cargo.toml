@@ -72,6 +72,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std", "
 git-version = "0.3.9"
 glam = "0.33"
 input = { version = "0.10.0", features = ["libinput_1_21"] }
+image-webp = "0.2.4"
 keyframe = { version = "1.1.1", default-features = false }
 libc = "0.2.189"
 libdisplay-info = "0.3.0"
@@ -85,7 +86,11 @@ pipewire = { version = "0.10", optional = true, features = ["v0_3_33"] }
 png = "0.18.1"
 portable-atomic = "1"
 profiling = "1.0.18"
+# AVIF screenshot encoding (rav1e-based). The default `asm` feature needs nasm
+# to build on x86_64; other architectures compile pure Rust.
+ravif = "0.13"
 resvg = { version = "0.45", default-features = false }
+rgb = { version = "0.8", features = ["bytemuck"] }
 sd-notify = "0.5.0"
 serde.workspace = true
 serde_json.workspace = true
@@ -96,6 +101,7 @@ tracy-client.workspace = true
 wayland-backend = "0.3"
 wayland-scanner = "0.31.11"
 wayland-server = "0.31.14"
+webp = { version = "0.3.1", default-features = false }
 xcursor = "0.3.11"
 zbus = { version = "5", optional = true }
 

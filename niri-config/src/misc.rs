@@ -1,4 +1,5 @@
 use knuffel::errors::DecodeError;
+use niri_ipc::ScreenshotFormat;
 
 use crate::appearance::{Color, WorkspaceShadow, WorkspaceShadowPart, DEFAULT_BACKDROP_COLOR};
 use crate::utils::{Flag, MergeWith};
@@ -65,6 +66,9 @@ impl Default for ScreenshotPath {
         )))
     }
 }
+
+#[derive(knuffel::Decode, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScreenshotFormatArg(#[knuffel(argument, str)] pub ScreenshotFormat);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HotkeyOverlay {

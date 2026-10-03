@@ -1,12 +1,15 @@
+#[path = "screenshot_shapes.rs"]
+mod shapes;
+
 use niri_config::Action;
-use smithay::input::keyboard::{Keysym, ModifiersState};
 use smithay::output::Output;
 use smithay::utils::{Physical, Point, Rectangle, Size};
 
 use super::fixture::Fixture;
 use super::knit::{open_window, render_output_rgba};
-use crate::ui::screenshot_editor::{self, Color, Control, Editor, EditorOutcome, Tool};
+use crate::ui::screenshot_editor::{self, Control, Editor, EditorOutcome};
 use crate::ui::screenshot_ui::ScreenshotUi;
+use niri_ipc::{ScreenshotColor as Color, ScreenshotTool as Tool, ScreenshotValueChange};
 
 /// Minimal config for deterministic rendering: no animations, startup overlay,
 /// gaps, or focus ring.
@@ -77,7 +80,8 @@ fn set_up(config_text: &str) -> Fixture {
 }
 
 fn open_ui(f: &mut Fixture) {
-    f.niri_state().open_screenshot_ui(false, None);
+    f.niri_state()
+        .open_screenshot_ui(false, None, niri_ipc::ScreenshotTool::Select);
     assert!(f.niri().screenshot_ui.is_open());
 }
 
@@ -172,26 +176,17 @@ fn rgba(color: Color) -> [u8; 4] {
     ]
 }
 
-/// Sends a key press through the editor's local key handler. The outer `None`
-/// means unhandled: input falls through to the common screenshot `action()`.
-fn key(f: &mut Fixture, raw: Keysym, mods: ModifiersState) -> Option<Option<Action>> {
-    f.niri().screenshot_ui.handle_editor_key(raw, mods)
+fn command(f: &mut Fixture, action: Action) -> Option<crate::ui::screenshot_ui::EditorCommand> {
+    f.niri().screenshot_ui.execute_action(&action)
 }
 
-fn no_mods() -> ModifiersState {
-    ModifiersState::default()
-}
-
-fn shift() -> ModifiersState {
-    ModifiersState {
-        shift: true,
-        ..Default::default()
-    }
-}
-
-/// The compositor action a key produces through the common fallback path.
-fn fallback_action(f: &mut Fixture, raw: Keysym, mods: ModifiersState) -> Option<Action> {
-    f.niri().screenshot_ui.action(raw, mods)
+fn set_zoom(f: &mut Fixture, zoom: u32) {
+    command(
+        f,
+        Action::ScreenshotMagnifierZoom {
+            zoom: ScreenshotValueChange::Set(zoom),
+        },
+    );
 }
 
 fn with_ui<R>(f: &mut Fixture, inspect: impl FnOnce(&ScreenshotUi) -> R) -> R {
@@ -227,16 +222,32 @@ fn control_center(f: &mut Fixture, output: &Output, control: Control) -> Point<i
         .iter()
         .position(|c| *c == control)
         .unwrap();
-    let rect = screenshot_editor::control_rect(index, size, scale);
+    let rect = screenshot_editor::control_rect(
+        index,
+        size,
+        scale,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
     Point::from((rect.loc.x + rect.size.w / 2, rect.loc.y + rect.size.h / 2))
+}
+
+fn hover_control(f: &mut Fixture, output: &Output, control: Control) {
+    let point = control_center(f, output, control);
+    f.niri().screenshot_ui.pointer_motion(point, None);
 }
 
 /// The output-local center of palette swatch `index`. Swatch geometry uses
 /// `control_rect` indices starting right after `CONTROLS`.
 fn color_center(f: &mut Fixture, output: &Output, index: usize) -> Point<i32, Physical> {
     let (size, scale, _) = f.niri().screenshot_ui.output_size(output).unwrap();
-    let rect =
-        screenshot_editor::control_rect(screenshot_editor::CONTROLS.len() + index, size, scale);
+    let rect = screenshot_editor::control_rect(
+        screenshot_editor::CONTROLS.len() + index,
+        size,
+        scale,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
     Point::from((rect.loc.x + rect.size.w / 2, rect.loc.y + rect.size.h / 2))
 }
 
@@ -265,12 +276,18 @@ fn screenshot_editor_draw_dot_and_stroke_capture_their_colors() {
     open_ui(&mut f);
 
     f.niri().screenshot_ui.set_tool(Tool::Draw);
-    f.niri().screenshot_ui.set_color(Color::Red);
+    f.niri()
+        .screenshot_ui
+        .set_color(Color { r: 255, g: 0, b: 0 });
     // A single-point gesture draws a dot.
     gesture(&mut f, &output, &[(480, 300)]);
     // A multi-point gesture draws a stroke.
     gesture(&mut f, &output, &[(300, 400), (460, 400), (620, 400)]);
-    f.niri().screenshot_ui.set_color(Color::Blue);
+    f.niri().screenshot_ui.set_color(Color {
+        r: 0,
+        g: 128,
+        b: 255,
+    });
     gesture(&mut f, &output, &[(600, 300)]);
 
     f.niri().screenshot_ui.set_tool(Tool::Select);
@@ -279,8 +296,12 @@ fn screenshot_editor_draw_dot_and_stroke_capture_their_colors() {
     let (size, pixels) = capture(&mut f);
     assert_eq!(size, Size::from((641, 521)));
 
-    let red = rgba(Color::Red);
-    let blue = rgba(Color::Blue);
+    let red = rgba(Color { r: 255, g: 0, b: 0 });
+    let blue = rgba(Color {
+        r: 0,
+        g: 128,
+        b: 255,
+    });
     // Captured coordinates are relative to the selection origin (100, 100).
     assert!(has_color_near(size, &pixels, 380, 200, 2, red, 2));
     assert!(has_color_near(size, &pixels, 360, 300, 2, red, 2));
@@ -293,18 +314,29 @@ fn screenshot_editor_brush_palette_updates_indicator_and_stroke() {
     let output = f.niri_output(1);
     open_ui(&mut f);
     select(&mut f, &output, (100, 100), (740, 620));
-    f.niri().screenshot_ui.set_color(Color::Red);
+    f.niri()
+        .screenshot_ui
+        .set_color(Color { r: 255, g: 0, b: 0 });
     let (size, scale, _) = f.niri().screenshot_ui.output_size(&output).unwrap();
     let draw = screenshot_editor::CONTROLS
         .iter()
         .position(|control| *control == Control::Tool(Tool::Draw))
         .unwrap();
-    let rect = screenshot_editor::control_rect(draw, size, scale);
+    let rect = screenshot_editor::control_rect(
+        draw,
+        size,
+        scale,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
     let center = Point::from((rect.loc.x + rect.size.w / 2, rect.loc.y + rect.size.h / 2));
 
     let ui = &mut f.niri().screenshot_ui;
     assert!(ui.pointer_down(output.clone(), center, None, false));
     assert_eq!(ui.pointer_up(None), Some(EditorOutcome::Changed));
+    assert!(!palette_open(&mut f));
+    // Selecting a tool does not open its palette; repeat activation does.
+    click(&mut f, &output, center);
     assert!(palette_open(&mut f));
     let blue = color_center(&mut f, &output, 4);
     click(&mut f, &output, blue);
@@ -318,7 +350,11 @@ fn screenshot_editor_brush_palette_updates_indicator_and_stroke() {
                 rect.loc.x + x,
                 rect.loc.y + rect.size.h - 2
             ),
-            rgba(Color::Blue),
+            rgba(Color {
+                r: 0,
+                g: 128,
+                b: 255
+            }),
             2
         ));
         assert!(!near(
@@ -328,7 +364,11 @@ fn screenshot_editor_brush_palette_updates_indicator_and_stroke() {
                 rect.loc.x + x,
                 rect.loc.y + rect.size.h - 5
             ),
-            rgba(Color::Blue),
+            rgba(Color {
+                r: 0,
+                g: 128,
+                b: 255
+            }),
             2
         ));
     }
@@ -341,7 +381,11 @@ fn screenshot_editor_brush_palette_updates_indicator_and_stroke() {
         380,
         260,
         2,
-        rgba(Color::Blue),
+        rgba(Color {
+            r: 0,
+            g: 128,
+            b: 255
+        }),
         2
     ));
 }
@@ -366,7 +410,7 @@ fn screenshot_editor_undo_redo_are_global_and_new_edit_clears_redo() {
     f.niri().screenshot_ui.set_tool(Tool::Draw);
     gesture(&mut f, &out1, &[(480, 360)]);
     gesture(&mut f, &out2, &[(480, 360)]);
-    let red = rgba(Color::Red);
+    let red = rgba(Color { r: 255, g: 0, b: 0 });
     let (size2, pixels) = capture(&mut f);
     assert_eq!(size2, size);
     assert!(has_color_near(size2, &pixels, 280, 160, 2, red, 2));
@@ -440,7 +484,7 @@ fn screenshot_editor_blur_softens_inside_rect_and_restores_on_undo() {
 
     // Blur applies to the frozen background only: a stroke over it stays crisp.
     f.niri().screenshot_ui.set_tool(Tool::Draw);
-    f.niri().screenshot_ui.set_color(Color::Black);
+    f.niri().screenshot_ui.set_color(Color { r: 0, g: 0, b: 0 });
     gesture(&mut f, &output, &[(340, 360), (620, 360)]);
     let (_, stroked) = capture(&mut f);
     assert!(has_color_near(
@@ -449,7 +493,7 @@ fn screenshot_editor_blur_softens_inside_rect_and_restores_on_undo() {
         400,
         280,
         2,
-        rgba(Color::Black),
+        rgba(Color { r: 0, g: 0, b: 0 }),
         2
     ));
 
@@ -474,14 +518,24 @@ fn screenshot_editor_dims_only_frozen_background() {
     f.niri().screenshot_ui.set_tool(Tool::Blur);
     gesture(&mut f, &output, &[(320, 240), (640, 480)]);
     f.niri().screenshot_ui.set_tool(Tool::Draw);
-    f.niri().screenshot_ui.set_color(Color::Blue);
+    f.niri().screenshot_ui.set_color(Color {
+        r: 0,
+        g: 128,
+        b: 255,
+    });
     gesture(&mut f, &output, &[(200, 360), (760, 360)]);
     let (size, image) = capture(&mut f);
 
     f.niri().screenshot_ui.set_tool(Tool::Select);
     select(&mut f, &output, (400, 200), (700, 500));
     // Hover the toolbar so the magnifier does not cover the sampled pixels.
-    let toolbar = screenshot_editor::control_rect(0, size, 1.);
+    let toolbar = screenshot_editor::control_rect(
+        0,
+        size,
+        1.,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
     f.niri()
         .screenshot_ui
         .pointer_motion(toolbar.loc + toolbar.size.downscale(2), None);
@@ -513,7 +567,13 @@ fn screenshot_editor_capture_excludes_overlay() {
     // This crop includes the toolbar and magnifier, not only an unobscured
     // interior rectangle. The toolbar overlaps the solid red window.
     let red = [255, 0, 0, 255];
-    let toolbar = screenshot_editor::control_rect(0, size, 1.);
+    let toolbar = screenshot_editor::control_rect(
+        0,
+        size,
+        1.,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
     let point = toolbar.loc + toolbar.size.downscale(2);
     assert!(near(px(size, &pixels, point.x, point.y), red, 2));
     let (render_size, rendered) = render_output_rgba(f.niri_state(), &output);
@@ -523,6 +583,48 @@ fn screenshot_editor_capture_excludes_overlay() {
         .pointer_motion((480, 360).into(), None);
     let (_, captured_with_magnifier) = capture(&mut f);
     assert_eq!(captured_with_magnifier, pixels);
+}
+
+#[test]
+fn screenshot_magnifier_border_and_grid_reload() {
+    let mut f = set_up(&format!(
+        r##"{CONFIG}
+        screenshot {{ magnifier {{
+            border-width 6; border-color "#0000ff";
+            grid-color "#ffffff80"; cross-highlight false;
+        }}; }}"##
+    ));
+    let output = f.niri_output(1);
+    let id = f.add_client();
+    open_window(&mut f, id, "left", 480, 720, [u32::MAX, 0, 0, u32::MAX]);
+    open_window(&mut f, id, "right", 480, 720, [u32::MAX, 0, 0, u32::MAX]);
+    open_ui(&mut f);
+    select(&mut f, &output, (0, 0), (959, 719));
+    let (size, original) = capture(&mut f);
+    f.niri()
+        .screenshot_ui
+        .pointer_motion((480, 300).into(), None);
+    set_zoom(&mut f, 4);
+    let (_, styled) = render_output_rgba(f.niri_state(), &output);
+    assert!(near(px(size, &styled, 684, 412), [0, 0, 255, 255], 2));
+    assert!(near(px(size, &styled, 550, 422), [255, 128, 128, 255], 2));
+    let replacement = niri_config::Config::parse_mem(
+        r##"
+        screenshot { magnifier {
+            border-width 0; border-color "#0000ff";
+            grid-color "#ffffff00"; cross-highlight false;
+        }; }
+    "##,
+    )
+    .unwrap();
+    f.niri().config.borrow_mut().screenshot = replacement.screenshot;
+    f.niri()
+        .screenshot_ui
+        .refresh_config(niri_config::ModKey::Super);
+    let (_, plain) = render_output_rgba(f.niri_state(), &output);
+    assert!(near(px(size, &plain, 684, 412), [255, 0, 0, 255], 2));
+    assert!(near(px(size, &plain, 550, 422), [255, 0, 0, 255], 2));
+    assert_eq!(capture(&mut f).1, original);
 }
 
 #[test]
@@ -538,7 +640,7 @@ fn screenshot_magnifier_pixels_grid_circle_and_zoom() {
     f.niri()
         .screenshot_ui
         .pointer_motion((480, 300).into(), None);
-    assert!(f.niri().screenshot_ui.scroll_magnifier(-240.));
+    set_zoom(&mut f, 4);
     let (_, four) = render_output_rgba(f.niri_state(), &output);
     // The lens starts at (496,316), its center is (592,412).
     // Circular corners are transparent; the left half magnifies the red window.
@@ -549,8 +651,7 @@ fn screenshot_magnifier_pixels_grid_circle_and_zoom() {
     assert!(px(size, &four, 592, 429)[2] > 60);
     assert!(near(px(size, &four, 595, 429), [0, 255, 0, 255], 2));
     assert!(near(px(size, &four, 592, 412), [0, 255, 0, 255], 2));
-    assert!(!f.niri().screenshot_ui.scroll_magnifier(-60.));
-    assert!(f.niri().screenshot_ui.scroll_magnifier(-60.));
+    set_zoom(&mut f, 8);
     let (_, eight) = render_output_rgba(f.niri_state(), &output);
     // Nearest keeps both sides of a pixel boundary pure, not interpolated.
     assert!(
@@ -573,44 +674,45 @@ fn screenshot_magnifier_pixels_grid_circle_and_zoom() {
 }
 
 #[test]
-fn screenshot_magnifier_scroll_limits_reverse_and_reopen() {
-    let mut f = set_up(CONFIG);
+fn screenshot_magnifier_thresholds_reset_and_limits() {
+    let mut f = set_up(&format!(
+        "{CONFIG}\nscreenshot {{ magnifier {{ initial-zoom 2; show-from 4; max-zoom 8; }}; }}"
+    ));
     open_ui(&mut f);
-    let ui = &mut f.niri().screenshot_ui;
-    assert!(ui.scroll_magnifier(-12000.));
-    assert!(!ui.scroll_magnifier(-120.));
-    assert!(ui.scroll_magnifier(120.));
-    assert!(ui.scroll_magnifier(12000.));
-    assert!(!ui.scroll_magnifier(120.));
-    assert!(!ui.scroll_magnifier(-60.));
-    assert!(!ui.scroll_magnifier(60.));
-    assert!(!ui.scroll_magnifier(-60.));
-    assert!(ui.scroll_magnifier(-60.));
-    ui.close();
-    assert!(!ui.scroll_magnifier(-120.));
-    open_ui(&mut f);
-    // Reopening resets to the hidden 1x state rather than retaining the old zoom.
-    assert!(!f.niri().screenshot_ui.scroll_magnifier(120.));
     let output = f.niri_output(1);
     f.niri()
         .screenshot_ui
         .pointer_motion((400, 300).into(), None);
-    let (size, hidden) = render_output_rgba(f.niri_state(), &output);
-    assert!(f.niri().screenshot_ui.scroll_magnifier(-120.));
+    let (_, hidden) = render_output_rgba(f.niri_state(), &output);
+    command(
+        &mut f,
+        Action::ScreenshotMagnifierZoom {
+            zoom: ScreenshotValueChange::Adjust(1),
+        },
+    );
     let (_, visible) = render_output_rgba(f.niri_state(), &output);
-    // Moving the pointer cannot change the displayed image while the lens is off.
-    assert!(f.niri().screenshot_ui.scroll_magnifier(120.));
+    assert_ne!(visible, hidden);
+    command(
+        &mut f,
+        Action::ScreenshotMagnifierZoom {
+            zoom: ScreenshotValueChange::Adjust(i32::MAX),
+        },
+    );
+    assert_eq!(with_editor(&mut f, |e| e.magnifier_zoom.level()), 8);
+    command(
+        &mut f,
+        Action::ScreenshotMagnifierZoom {
+            zoom: ScreenshotValueChange::Adjust(i32::MIN),
+        },
+    );
+    assert_eq!(with_editor(&mut f, |e| e.magnifier_zoom.level()), 1);
+    f.niri().screenshot_ui.close();
+    open_ui(&mut f);
+    assert_eq!(with_editor(&mut f, |e| e.magnifier_zoom.level()), 2);
     f.niri()
         .screenshot_ui
-        .pointer_motion((200, 200).into(), None);
-    let (_, hidden_again) = render_output_rgba(f.niri_state(), &output);
-    assert_eq!(hidden, hidden_again);
-    // The center outline proves the lens reappears at 2x, not just its model state.
-    assert!(!near(
-        px(size, &visible, 512, 412),
-        px(size, &hidden, 512, 412),
-        8
-    ));
+        .pointer_motion((400, 300).into(), None);
+    assert_eq!(render_output_rgba(f.niri_state(), &output).1, hidden);
 }
 
 #[test]
@@ -641,7 +743,7 @@ fn screenshot_editor_fractional_scale_and_transformed_output() {
         300,
         200,
         4,
-        rgba(Color::Red),
+        rgba(Color { r: 255, g: 0, b: 0 }),
         4
     ));
 
@@ -665,7 +767,7 @@ fn screenshot_editor_fractional_scale_and_transformed_output() {
         260,
         200,
         4,
-        rgba(Color::Red),
+        rgba(Color { r: 255, g: 0, b: 0 }),
         4
     ));
 }
@@ -702,7 +804,11 @@ fn screenshot_editor_palette_swatches_require_open_popup_and_dismiss_cleanly() {
     assert!(!palette_open(&mut f));
     assert_eq!(
         with_editor(&mut f, |e| e.color),
-        screenshot_editor::COLORS[4]
+        Color {
+            r: 0,
+            g: 128,
+            b: 255
+        }
     );
     assert_eq!(with_editor(&mut f, |e| e.history.len()), 1);
     assert_eq!(capture(&mut f).1, with_dot);
@@ -720,7 +826,7 @@ fn screenshot_editor_palette_swatches_require_open_popup_and_dismiss_cleanly() {
         Some(EditorOutcome::Changed)
     );
     assert!(!palette_open(&mut f));
-    assert!(with_editor(&mut f, |e| e.gesture.is_none()));
+
     assert_eq!(with_editor(&mut f, |e| e.history.len()), 1);
     assert_eq!(capture(&mut f).1, with_dot);
 
@@ -738,14 +844,36 @@ fn screenshot_editor_palette_swatches_require_open_popup_and_dismiss_cleanly() {
         380,
         200,
         2,
-        rgba(screenshot_editor::COLORS[4]),
+        rgba(Color {
+            r: 0,
+            g: 128,
+            b: 255
+        }),
         2
     ));
 
     // Toolbar padding (the gap between control groups) is overlay, not
     // canvas: with the popup open it dismisses without an edit.
-    let blur_rect = screenshot_editor::control_rect(2, size, scale);
-    let undo_rect = screenshot_editor::control_rect(3, size, scale);
+    let blur_rect = screenshot_editor::control_rect(
+        screenshot_editor::CONTROLS
+            .iter()
+            .position(|control| *control == Control::Tool(Tool::Blur))
+            .unwrap(),
+        size,
+        scale,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
+    let undo_rect = screenshot_editor::control_rect(
+        screenshot_editor::CONTROLS
+            .iter()
+            .position(|control| *control == Control::Undo)
+            .unwrap(),
+        size,
+        scale,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
     let padding = Point::from((
         (blur_rect.loc.x + blur_rect.size.w + undo_rect.loc.x) / 2,
         blur_rect.loc.y + blur_rect.size.h / 2,
@@ -774,163 +902,65 @@ fn screenshot_editor_palette_swatches_require_open_popup_and_dismiss_cleanly() {
     assert_eq!(with_editor(&mut f, |e| e.history.len()), 2);
 }
 
-/// Keyboard tool switching, Tab focus cycling over enabled controls, digit
-/// swatch selection and Enter activation through `handle_editor_key`.
 #[test]
-fn screenshot_editor_keyboard_tools_focus_digits_and_enter_outcomes() {
+fn screenshot_editor_focus_activation_and_palette_selection() {
     let mut f = set_up(CONFIG);
-    let output = f.niri_output(1);
     open_ui(&mut f);
-
-    // The palette key is gated on the Draw tool: dead in Select.
-    assert_eq!(key(&mut f, Keysym::c, no_mods()), Some(None));
-    assert!(!palette_open(&mut f));
-
-    // Tool keys work regardless of focus.
-    assert_eq!(key(&mut f, Keysym::b, no_mods()), Some(None));
-    assert_eq!(with_editor(&mut f, |e| e.tool), Tool::Draw);
-    assert_eq!(key(&mut f, Keysym::r, no_mods()), Some(None));
-    assert_eq!(with_editor(&mut f, |e| e.tool), Tool::Blur);
-    assert_eq!(key(&mut f, Keysym::v, no_mods()), Some(None));
-    assert_eq!(with_editor(&mut f, |e| e.tool), Tool::Select);
-    // Modifier chords stay compositor actions.
-    let ctrl = ModifiersState {
-        ctrl: true,
-        ..Default::default()
-    };
-    assert!(key(&mut f, Keysym::b, ctrl).is_none());
-
-    // Draw re-enables the palette key.
-    assert_eq!(key(&mut f, Keysym::b, no_mods()), Some(None));
-
-    // Digits without the popup are unhandled and reach no fallback action.
-    // Digits without the popup are unhandled.
-    assert!(key(&mut f, Keysym::_2, no_mods()).is_none());
-
-    // Tab walks only enabled controls: with Draw active and empty history the
-    // ring is Select, Draw, Blur, Pointer, Copy, Save.
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
-    assert_eq!(focus(&mut f), Some(Control::Tool(Tool::Select)));
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
+    command(&mut f, Action::ScreenshotTool { tool: Tool::Draw });
+    command(&mut f, Action::ScreenshotFocusNext);
+    command(&mut f, Action::ScreenshotFocusNext);
     assert_eq!(focus(&mut f), Some(Control::Tool(Tool::Draw)));
-    // Enter on the brush opens its palette; Escape returns focus to the brush.
-    assert_eq!(key(&mut f, Keysym::Return, no_mods()), Some(None));
+    command(&mut f, Action::ScreenshotConfirm);
     assert!(palette_open(&mut f));
-    assert_eq!(key(&mut f, Keysym::Escape, no_mods()), Some(None));
-    assert_eq!(with_editor(&mut f, |e| e.tool), Tool::Draw);
-    assert_eq!(focus(&mut f), Some(Control::Tool(Tool::Draw)));
-
-    // Shift+Tab walks backwards and wraps to the last enabled control.
-    assert_eq!(key(&mut f, Keysym::Tab, shift()), Some(None));
-    assert_eq!(focus(&mut f), Some(Control::Tool(Tool::Select)));
-    assert_eq!(key(&mut f, Keysym::Tab, shift()), Some(None));
-    assert_eq!(focus(&mut f), Some(Control::Save));
-
-    // Enter on focused Save/Copy requests compositor outcomes.
-    assert!(matches!(
-        key(&mut f, Keysym::Return, no_mods()),
-        Some(Some(Action::ConfirmScreenshot {
-            write_to_disk: true
-        }))
-    ));
-    // Returning an outcome does not close the UI by itself.
-    assert!(f.niri().screenshot_ui.is_open());
-    assert_eq!(focus(&mut f), Some(Control::Save));
-    // Forward wrap lands back on the first control.
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
-    assert_eq!(focus(&mut f), Some(Control::Tool(Tool::Select)));
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
-    assert_eq!(focus(&mut f), Some(Control::Tool(Tool::Draw)));
-
-    // Enter on Draw opens the popup and focuses the current swatch;
-    // swatches are appended to the focus ring while it is open.
-    assert_eq!(key(&mut f, Keysym::Return, no_mods()), Some(None));
-    assert!(palette_open(&mut f));
-    assert_eq!(
-        focus(&mut f),
-        Some(Control::Color(screenshot_editor::COLORS[0]))
-    );
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
-    assert_eq!(
-        focus(&mut f),
-        Some(Control::Color(screenshot_editor::COLORS[1]))
-    );
-    // Enter picks the swatch, closes the popup and returns focus to Draw.
-    assert_eq!(key(&mut f, Keysym::Return, no_mods()), Some(None));
+    command(&mut f, Action::ScreenshotPaletteColor { index: 5 });
     assert!(!palette_open(&mut f));
     assert_eq!(
         with_editor(&mut f, |e| e.color),
-        screenshot_editor::COLORS[1]
+        Color {
+            r: 0,
+            g: 128,
+            b: 255
+        }
     );
     assert_eq!(focus(&mut f), Some(Control::Tool(Tool::Draw)));
-
-    // Reopening through the key focuses the *current* color, not the first.
-    assert_eq!(key(&mut f, Keysym::c, no_mods()), Some(None));
-    assert!(palette_open(&mut f));
+    command(&mut f, Action::ScreenshotFocusPrevious);
+    command(&mut f, Action::ScreenshotFocusPrevious);
+    assert_eq!(focus(&mut f), Some(Control::Save));
     assert_eq!(
-        focus(&mut f),
-        Some(Control::Color(screenshot_editor::COLORS[1]))
+        command(&mut f, Action::ScreenshotConfirm),
+        Some(crate::ui::screenshot_ui::EditorCommand::Export(
+            crate::utils::screenshot::ExportRequest::Save {
+                path: None,
+                format: None,
+                quality: None,
+            }
+        ))
     );
-    // Digits pick a swatch, close the popup and park focus on Draw.
-    assert_eq!(key(&mut f, Keysym::_5, no_mods()), Some(None));
-    assert!(!palette_open(&mut f));
-    assert_eq!(
-        with_editor(&mut f, |e| e.color),
-        screenshot_editor::COLORS[4]
-    );
-    assert_eq!(focus(&mut f), Some(Control::Tool(Tool::Draw)));
-
-    // Enter on focused Copy reports the copy outcome.
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
-    assert_eq!(focus(&mut f), Some(Control::Tool(Tool::Blur)));
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
+    command(&mut f, Action::ScreenshotFocusPrevious);
     assert_eq!(focus(&mut f), Some(Control::Copy));
-    assert!(matches!(
-        key(&mut f, Keysym::Return, no_mods()),
-        Some(Some(Action::ConfirmScreenshot {
-            write_to_disk: false
-        }))
-    ));
-
-    // Pointer motion drops keyboard focus; Enter with no focus falls through
-    // instead of activating a control.
-    f.niri()
-        .screenshot_ui
-        .pointer_motion((480, 400).into(), None);
-    assert_eq!(focus(&mut f), None);
-    assert!(key(&mut f, Keysym::Return, no_mods()).is_none());
-
-    // With a committed edit Undo joins the focus ring and can be activated.
-    gesture(&mut f, &output, &[(480, 360)]);
-    let (_, baseline) = capture(&mut f);
-    f.niri().screenshot_ui.set_color(Color::Blue);
-    gesture(&mut f, &output, &[(600, 400)]);
-    // Enabled ring: Select, Draw, Blur, Undo, Pointer, Copy, Save.
-    for _ in 0..4 {
-        assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
-    }
-    assert_eq!(focus(&mut f), Some(Control::Undo));
-    // Undoing the newer dot leaves one edit in history, so Undo stays enabled
-    // and Redo takes the ring slot right behind it.
-    assert_eq!(key(&mut f, Keysym::Return, no_mods()), Some(None));
-    let (_, pixels) = capture(&mut f);
-    assert_eq!(pixels, baseline);
-    assert_eq!(focus(&mut f), Some(Control::Undo));
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
-    assert_eq!(focus(&mut f), Some(Control::Redo));
-    assert_eq!(key(&mut f, Keysym::Return, no_mods()), Some(None));
-    let (size2, pixels) = capture(&mut f);
-    // Relative to the default quarter-selection: (600,400) -> (360,220).
-    assert!(has_color_near(
-        size2,
-        &pixels,
-        360,
-        220,
-        2,
-        rgba(Color::Blue),
-        2
-    ));
+    assert_eq!(
+        command(&mut f, Action::ScreenshotConfirm),
+        Some(crate::ui::screenshot_ui::EditorCommand::Export(
+            crate::utils::screenshot::ExportRequest::ClipboardOnly
+        ))
+    );
+    assert_eq!(
+        command(
+            &mut f,
+            Action::ConfirmScreenshot {
+                write_to_disk: true,
+                format: None,
+                quality: None,
+            }
+        ),
+        Some(crate::ui::screenshot_ui::EditorCommand::Export(
+            crate::utils::screenshot::ExportRequest::Save {
+                path: None,
+                format: None,
+                quality: None,
+            }
+        ))
+    );
 }
 
 /// Escape dismisses the popup, cancels an in-progress gesture or select drag
@@ -946,9 +976,9 @@ fn screenshot_editor_escape_layers_and_crop_restore() {
 
     // Layer 1: open palette swallows Escape and returns focus to Draw.
     f.niri().screenshot_ui.set_tool(Tool::Draw);
-    assert_eq!(key(&mut f, Keysym::c, no_mods()), Some(None));
+    assert_eq!(command(&mut f, Action::ScreenshotTogglePalette), None);
     assert!(palette_open(&mut f));
-    assert_eq!(key(&mut f, Keysym::Escape, no_mods()), Some(None));
+    assert_eq!(command(&mut f, Action::ScreenshotCancel), None);
     assert!(!palette_open(&mut f));
     // Focus was not on a swatch, so it stays unset.
     assert_eq!(focus(&mut f), None);
@@ -958,9 +988,9 @@ fn screenshot_editor_escape_layers_and_crop_restore() {
     assert!(ui.pointer_down(output.clone(), (400, 300).into(), None, false));
     ui.pointer_motion((460, 300).into(), None);
     // Tab is a no-op mid-gesture instead of moving focus under the stroke.
-    assert_eq!(key(&mut f, Keysym::Tab, no_mods()), Some(None));
-    assert_eq!(key(&mut f, Keysym::Escape, no_mods()), Some(None));
-    assert!(with_editor(&mut f, |e| e.gesture.is_none()));
+    assert_eq!(command(&mut f, Action::ScreenshotFocusNext), None);
+    assert_eq!(command(&mut f, Action::ScreenshotCancel), None);
+
     assert_eq!(with_editor(&mut f, |e| e.history.len()), 0);
     // The matching release reaches nobody.
     assert_eq!(f.niri().screenshot_ui.pointer_up(None), None);
@@ -971,16 +1001,14 @@ fn screenshot_editor_escape_layers_and_crop_restore() {
     let ui = &mut f.niri().screenshot_ui;
     assert!(ui.pointer_down(output.clone(), (300, 400).into(), None, false));
     ui.pointer_motion((500, 600).into(), None);
-    assert_eq!(key(&mut f, Keysym::Escape, no_mods()), Some(None));
+    assert_eq!(command(&mut f, Action::ScreenshotCancel), None);
     assert_eq!(f.niri().screenshot_ui.selection_points().unwrap(), before);
     assert_eq!(f.niri().screenshot_ui.pointer_up(None), None);
 
-    // Idle: Escape is unhandled locally and falls through to cancel.
-    assert!(key(&mut f, Keysym::Escape, no_mods()).is_none());
-    assert!(matches!(
-        fallback_action(&mut f, Keysym::Escape, no_mods()),
-        Some(Action::CancelScreenshot)
-    ));
+    assert_eq!(
+        command(&mut f, Action::ScreenshotCancel),
+        Some(crate::ui::screenshot_ui::EditorCommand::Close)
+    );
     assert!(f.niri().screenshot_ui.is_open());
 }
 
@@ -1005,7 +1033,7 @@ fn screenshot_editor_space_drag_moves_crop_in_any_tool() {
     assert_eq!(moved.0.y - before.0.y, 30);
     assert_eq!(moved.1.x - before.1.x, 40);
     assert_eq!(moved.1.y - before.1.y, 30);
-    assert!(with_editor(&mut f, |e| e.gesture.is_none()));
+
     assert_eq!(
         f.niri().screenshot_ui.pointer_up(None),
         Some(EditorOutcome::Changed)
@@ -1021,13 +1049,10 @@ fn screenshot_editor_space_drag_moves_crop_in_any_tool() {
     assert_eq!(moved2.0.x - moved.0.x, 50);
     assert_eq!(moved2.0.y - moved.0.y, 0);
     // Escape mid-move restores the crop to where the drag began.
-    assert_eq!(key(&mut f, Keysym::Escape, no_mods()), Some(None));
+    assert_eq!(command(&mut f, Action::ScreenshotCancel), None);
     assert_eq!(f.niri().screenshot_ui.selection_points().unwrap(), moved);
     assert_eq!(f.niri().screenshot_ui.pointer_up(None), None);
     f.niri().screenshot_ui.set_space_down(false);
-
-    // Space itself is consumed locally: it reaches no save fallback.
-    assert_eq!(key(&mut f, Keysym::space, no_mods()), Some(None));
 }
 
 /// Toolbar opacity drops while a canvas gesture or select drag is held, but
@@ -1054,7 +1079,15 @@ fn screenshot_editor_toolbar_opacity_only_drops_for_canvas_drags() {
     let save_rect = screenshot_editor::CONTROLS
         .iter()
         .position(|c| *c == Control::Save)
-        .map(|i| screenshot_editor::control_rect(i, size, scale))
+        .map(|i| {
+            screenshot_editor::control_rect(
+                i,
+                size,
+                scale,
+                &f.niri().config.borrow().screenshot,
+                Tool::Draw,
+            )
+        })
         .unwrap();
     f.niri()
         .screenshot_ui
@@ -1068,7 +1101,7 @@ fn screenshot_editor_toolbar_opacity_only_drops_for_canvas_drags() {
     let (_, during_select) = render_output_rgba(f.niri_state(), &output);
     assert!(!pixels_equal_in(size, &idle, &during_select, save_rect));
     // Escape cancels the drag and restores full opacity and the old crop.
-    assert_eq!(key(&mut f, Keysym::Escape, no_mods()), Some(None));
+    assert_eq!(command(&mut f, Action::ScreenshotCancel), None);
     let (_, after_escape) = render_output_rgba(f.niri_state(), &output);
     assert!(pixels_equal_in(size, &idle, &after_escape, save_rect));
     assert_eq!(f.niri().screenshot_ui.pointer_up(None), None);
@@ -1132,17 +1165,33 @@ fn screenshot_editor_toolbar_opacity_only_drops_for_canvas_drags() {
     let (_, after_press) = render_output_rgba(f.niri_state(), &output);
     assert_eq!(after_press, pre_press);
     // Held overlay press (bar padding) keeps full opacity too.
-    let blur_rect = screenshot_editor::control_rect(2, size, scale);
-    let undo_rect = screenshot_editor::control_rect(3, size, scale);
+    let blur_rect = screenshot_editor::control_rect(
+        screenshot_editor::CONTROLS
+            .iter()
+            .position(|control| *control == Control::Tool(Tool::Blur))
+            .unwrap(),
+        size,
+        scale,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
+    let undo_rect = screenshot_editor::control_rect(
+        screenshot_editor::CONTROLS
+            .iter()
+            .position(|control| *control == Control::Undo)
+            .unwrap(),
+        size,
+        scale,
+        &f.niri().config.borrow().screenshot,
+        Tool::Draw,
+    );
     let padding = Point::from((
         (blur_rect.loc.x + blur_rect.size.w + undo_rect.loc.x) / 2,
         blur_rect.loc.y + blur_rect.size.h / 2,
     ));
     let ui = &mut f.niri().screenshot_ui;
     assert!(ui.pointer_down(output.clone(), padding, None, false));
-    assert!(with_editor(&mut f, |e| {
-        matches!(e.gesture, Some(screenshot_editor::Gesture::Overlay { .. }))
-    }));
+
     let (_, during_overlay) = render_output_rgba(f.niri_state(), &output);
     assert!(pixels_equal_in(
         size,
@@ -1169,7 +1218,15 @@ fn screenshot_editor_action_controls_outcomes_and_pointer_toggle() {
     let pointer_rect = screenshot_editor::CONTROLS
         .iter()
         .position(|c| *c == Control::Pointer)
-        .map(|i| screenshot_editor::control_rect(i, size, scale))
+        .map(|i| {
+            screenshot_editor::control_rect(
+                i,
+                size,
+                scale,
+                &f.niri().config.borrow().screenshot,
+                Tool::Draw,
+            )
+        })
         .unwrap();
 
     // Disabled Undo is absorbed without an edit.
@@ -1207,7 +1264,209 @@ fn screenshot_editor_action_controls_outcomes_and_pointer_toggle() {
     assert!(!show_pointer(&mut f));
     let (_, restored) = render_output_rgba(f.niri_state(), &output);
     assert_eq!(restored, before);
+}
 
-    // The 'p' shortcut stays a compositor action, not an editor-local key.
-    assert!(key(&mut f, Keysym::p, no_mods()).is_none());
+#[test]
+fn screenshot_reload_defers_gesture_and_preserves_session_and_strokes() {
+    let mut f = set_up(CONFIG);
+    let output = f.niri_output(1);
+    open_ui(&mut f);
+    select(&mut f, &output, (100, 100), (740, 620));
+    command(&mut f, Action::ScreenshotTool { tool: Tool::Draw });
+    hover_control(&mut f, &output, Control::Tool(Tool::Draw));
+    command(
+        &mut f,
+        Action::ScreenshotContext {
+            change: ScreenshotValueChange::Set(12),
+        },
+    );
+    command(
+        &mut f,
+        Action::ScreenshotBrushColor {
+            color: Color {
+                r: 18,
+                g: 52,
+                b: 86,
+            },
+        },
+    );
+    let crop = f.niri().screenshot_ui.selection_points().unwrap();
+    let ui = &mut f.niri().screenshot_ui;
+    assert!(ui.pointer_down(output.clone(), (300, 300).into(), None, false));
+    ui.pointer_motion((500, 300).into(), None);
+    let replacement = niri_config::Config::parse_mem(
+        r##"
+        screenshot {
+            toolbar { button-size 52; }
+            brush { width 2; color "#00FF00"; palette "#00FF00"; }
+            magnifier { initial-zoom 2; max-zoom 4; }
+        }
+    "##,
+    )
+    .unwrap();
+    let old_button_size = with_editor(&mut f, |e| e.settings.toolbar.button_size);
+    f.niri().config.borrow_mut().screenshot = replacement.screenshot;
+    f.niri()
+        .screenshot_ui
+        .refresh_config(niri_config::ModKey::Super);
+    assert_eq!(
+        with_editor(&mut f, |e| e.settings.toolbar.button_size),
+        old_button_size
+    );
+    assert_eq!(
+        command(
+            &mut f,
+            Action::ConfirmScreenshot {
+                write_to_disk: false,
+                format: None,
+                quality: None,
+            }
+        ),
+        None
+    );
+    assert_eq!(with_editor(&mut f, |e| e.width), 12);
+    f.niri().screenshot_ui.pointer_up(None);
+    assert_eq!(with_editor(&mut f, |e| e.settings.toolbar.button_size), 52.);
+    assert_eq!(
+        with_editor(&mut f, |e| (e.tool, e.width, e.color)),
+        (
+            Tool::Draw,
+            12,
+            Color {
+                r: 18,
+                g: 52,
+                b: 86
+            }
+        )
+    );
+    assert_eq!(f.niri().screenshot_ui.selection_points().unwrap(), crop);
+    let (size, before) = capture(&mut f);
+    assert!(near(px(size, &before, 300, 204), [18, 52, 86, 255], 2));
+    hover_control(&mut f, &output, Control::Tool(Tool::Draw));
+    command(
+        &mut f,
+        Action::ScreenshotContext {
+            change: ScreenshotValueChange::Set(2),
+        },
+    );
+    command(
+        &mut f,
+        Action::ScreenshotBrushColor {
+            color: Color { r: 0, g: 255, b: 0 },
+        },
+    );
+    gesture(&mut f, &output, &[(300, 400), (500, 400)]);
+    let (_, with_second) = capture(&mut f);
+    assert!(near(px(size, &with_second, 300, 300), [0, 255, 0, 255], 2));
+    command(&mut f, Action::ScreenshotUndo);
+    assert_eq!(capture(&mut f).1, before);
+    command(&mut f, Action::ScreenshotRedo);
+    assert_eq!(capture(&mut f).1, with_second);
+    f.niri().screenshot_ui.close();
+    open_ui(&mut f);
+    assert_eq!(
+        with_editor(&mut f, |e| (e.width, e.color, e.magnifier_zoom.level())),
+        (2, Color { r: 0, g: 255, b: 0 }, 2)
+    );
+}
+
+#[test]
+fn screenshot_selection_commands_clamp_without_overflow() {
+    let mut f = set_up(CONFIG);
+    let output = f.niri_output(1);
+    open_ui(&mut f);
+    select(&mut f, &output, (100, 100), (300, 250));
+    command(
+        &mut f,
+        Action::ScreenshotMoveSelection {
+            x: i32::MAX,
+            y: i32::MIN,
+        },
+    );
+    assert_eq!(
+        f.niri().screenshot_ui.selection_points(),
+        Some(((759, 0).into(), (959, 150).into()))
+    );
+    command(
+        &mut f,
+        Action::ScreenshotResizeSelection {
+            width: i32::MIN,
+            height: i32::MAX,
+        },
+    );
+    assert_eq!(
+        f.niri().screenshot_ui.selection_points(),
+        Some(((759, 0).into(), (759, 719).into()))
+    );
+    command(&mut f, Action::ScreenshotTool { tool: Tool::Draw });
+    hover_control(&mut f, &output, Control::Tool(Tool::Draw));
+    command(
+        &mut f,
+        Action::ScreenshotContext {
+            change: ScreenshotValueChange::Adjust(i32::MAX),
+        },
+    );
+    assert_eq!(with_editor(&mut f, |e| e.width), 128);
+    command(
+        &mut f,
+        Action::ScreenshotContext {
+            change: ScreenshotValueChange::Adjust(i32::MIN),
+        },
+    );
+    assert_eq!(with_editor(&mut f, |e| e.width), 1);
+}
+
+#[test]
+fn screenshot_theme_dims_inactive_outputs_too() {
+    let mut f = set_up(&format!(
+        r##"{TWO_OUTPUTS_CONFIG}
+        screenshot {{ selection {{ dim-color "#ff0000"; dim-opacity 0.5; }}; }}
+    "##
+    ));
+    f.add_output(2, (960, 720));
+    open_ui(&mut f);
+    let out1 = f.niri_output(1);
+    let out2 = f.niri_output(2);
+    let (size, first) = render_output_rgba(f.niri_state(), &out1);
+    let (_, second) = render_output_rgba(f.niri_state(), &out2);
+    let first = px(size, &first, 10, 300);
+    let second = px(size, &second, 10, 300);
+    assert!(first[0] > first[1].saturating_add(80));
+    assert_eq!(first, second);
+}
+
+#[test]
+fn screenshot_selection_touch_release_order_preserves_crop() {
+    use smithay::backend::input::TouchSlot;
+    for secondary_first in [false, true] {
+        let mut f = set_up(CONFIG);
+        let output = f.niri_output(1);
+        open_ui(&mut f);
+        let ui = &mut f.niri().screenshot_ui;
+        let primary = Some(TouchSlot::from(Some(0)));
+        let secondary = Some(TouchSlot::from(Some(1)));
+        assert!(ui.pointer_down(output.clone(), (100, 100).into(), primary, false));
+        ui.pointer_motion((300, 300).into(), primary);
+        assert!(!ui.pointer_down(output, (400, 400).into(), secondary, false));
+        ui.pointer_motion((320, 330).into(), primary);
+        assert_eq!(
+            ui.selection_points(),
+            Some(((120, 130).into(), (320, 330).into()))
+        );
+        if secondary_first {
+            assert_eq!(ui.pointer_up(secondary), None);
+            assert!(ui.has_active_gesture());
+            ui.pointer_motion((350, 360).into(), primary);
+            assert_eq!(
+                ui.selection_points(),
+                Some(((120, 130).into(), (350, 360).into()))
+            );
+        }
+        assert_eq!(ui.pointer_up(primary), Some(EditorOutcome::Changed));
+        let committed = ui.selection_points();
+        assert_eq!(ui.pointer_up(secondary), None);
+        ui.pointer_motion((600, 600).into(), primary);
+        assert_eq!(ui.selection_points(), committed);
+        assert!(!ui.has_active_gesture());
+    }
 }

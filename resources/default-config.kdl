@@ -298,7 +298,11 @@ hotkey-overlay {
 // You can change the path where screenshots are saved.
 // A ~ at the front will be expanded to the home directory.
 // The path is formatted with strftime(3) to give you the screenshot date and time.
-screenshot-path "~/Pictures/Screenshots/Screenshot from %Y-%m-%d %H-%M-%S.png"
+// {ext} follows the selected format; old filename extensions are adjusted too.
+screenshot-path "~/Pictures/Screenshots/Screenshot from %Y-%m-%d %H-%M-%S.{ext}"
+// File format: png (default), webp, avif.
+// Clipboard images always use PNG.
+screenshot-format "png"
 
 // You can also set this to null to disable saving screenshots to disk.
 // screenshot-path null
@@ -652,6 +656,77 @@ binds {
     Print { screenshot; }
     Ctrl+Print { screenshot-screen; }
     Alt+Print { screenshot-window; }
+
+    // Screenshot editor binds: these actions only take effect while the
+    // screenshot UI is open. They do not consume the keys when it is closed,
+    // so remapping or removing them removes the editor shortcut entirely.
+    V { screenshot-tool "select"; }
+    B { screenshot-tool "draw"; }
+    A { screenshot-tool "arrow"; }
+    D { screenshot-tool "rectangle"; }
+    R { screenshot-tool "blur"; }
+    C { screenshot-toggle-palette; }
+
+    // Pick a palette color while the palette is open.
+    "1" { screenshot-palette-color 1; }
+    "2" { screenshot-palette-color 2; }
+    "3" { screenshot-palette-color 3; }
+    "4" { screenshot-palette-color 4; }
+    "5" { screenshot-palette-color 5; }
+    "6" { screenshot-palette-color 6; }
+    "7" { screenshot-palette-color 7; }
+
+    // Keyboard-focused tool first, otherwise the tool under the pointer: stroke width or
+    // strength for Blur; no-op over Select and other UI.
+    Minus { screenshot-context "-1"; }
+    Equal { screenshot-context "+1"; }
+    X repeat=false { screenshot-toggle-axes; }
+    Shift_L repeat=false { screenshot-toggle-axes hold=true; }
+
+    Ctrl+Z { screenshot-undo; }
+    Ctrl+Shift+Z { screenshot-redo; }
+    Ctrl+Y { screenshot-redo; }
+    P { screenshot-toggle-pointer; }
+
+    // Ctrl+C copies to clipboard without saving a file; Ctrl+S also writes to
+    // disk. Return activates the focused toolbar button or, without a focused
+    // button, saves and copies. Escape steps back: close palette, cancel the
+    // current gesture, then close the editor.
+    Ctrl+C { confirm-screenshot write-to-disk=false; }
+    Ctrl+S { confirm-screenshot write-to-disk=true; }
+    // Optional one-shot export overrides (do not change the configured format).
+    // Ctrl+Alt+P { confirm-screenshot format="png"; }
+    // Ctrl+Alt+W { confirm-screenshot format="webp" quality=85; }
+    // Ctrl+Alt+A { confirm-screenshot format="avif" quality=90; }
+    Return { screenshot-confirm; }
+    Escape { screenshot-cancel; }
+
+    // Move and resize the selection by frozen-frame pixels.
+    Left  { screenshot-move-selection x=-1 y=0; }
+    Right { screenshot-move-selection x=1 y=0; }
+    Up    { screenshot-move-selection x=0 y=-1; }
+    Down  { screenshot-move-selection x=0 y=1; }
+    Ctrl+Left  { screenshot-move-selection x=-20 y=0; }
+    Ctrl+Right { screenshot-move-selection x=20 y=0; }
+    Ctrl+Up    { screenshot-move-selection x=0 y=-20; }
+    Ctrl+Down  { screenshot-move-selection x=0 y=20; }
+    Shift+Left  { screenshot-resize-selection width=-1 height=0; }
+    Shift+Right { screenshot-resize-selection width=1 height=0; }
+    Shift+Up    { screenshot-resize-selection width=0 height=-1; }
+    Shift+Down  { screenshot-resize-selection width=0 height=1; }
+
+    // Hold to move the selection with the pointer; releasing the physical key
+    // ends the hold. Space does not confirm the screenshot.
+    Space repeat=false { screenshot-move-selection-hold; }
+
+    // Keyboard focus takes priority; otherwise tool parameter under the pointer,
+    // magnifier zoom steps 1x, 2x, 4x, 8x, 16x, 32x over the canvas.
+    WheelScrollUp   { screenshot-context "+1"; }
+    WheelScrollDown { screenshot-context "-1"; }
+
+    // Cycle keyboard focus between toolbar controls.
+    Tab { screenshot-focus-next; }
+    Shift+Tab { screenshot-focus-previous; }
 
     // Applications such as remote-desktop clients and software KVM switches may
     // request that niri stops processing the keyboard shortcuts defined here

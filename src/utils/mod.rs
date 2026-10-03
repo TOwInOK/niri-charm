@@ -40,6 +40,7 @@ use crate::niri::ClientState;
 pub mod id;
 pub mod region;
 pub mod scale;
+pub mod screenshot;
 pub mod signals;
 pub mod spawning;
 pub mod transaction;
@@ -319,12 +320,16 @@ pub fn expand_home(path: &Path) -> anyhow::Result<Option<PathBuf>> {
     }
 }
 
-pub fn make_screenshot_path(config: &Config) -> anyhow::Result<Option<PathBuf>> {
+pub fn make_screenshot_path(
+    config: &Config,
+    image_format: niri_ipc::ScreenshotFormat,
+) -> anyhow::Result<Option<PathBuf>> {
     let Some(path) = &config.screenshot_path.0 else {
         return Ok(None);
     };
 
-    let format = CString::new(path.clone()).context("path must not contain nul bytes")?;
+    let template = path.replace("{ext}", image_format.extension());
+    let format = CString::new(template).context("path must not contain nul bytes")?;
 
     let mut buf = [0u8; 2048];
     let mut path;
@@ -344,22 +349,29 @@ pub fn make_screenshot_path(config: &Config) -> anyhow::Result<Option<PathBuf>> 
     if let Some(expanded) = expand_home(&path).context("error expanding ~")? {
         path = expanded;
     }
+    path.set_extension(image_format.extension());
 
     Ok(Some(path))
 }
 
 pub fn write_png_rgba8(
-    w: impl Write,
+    mut w: impl Write,
     width: u32,
     height: u32,
     pixels: &[u8],
 ) -> Result<(), png::EncodingError> {
-    let mut encoder = png::Encoder::new(w, width, height);
+    let mut encoder = png::Encoder::new(&mut w, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
 
     let mut writer = encoder.write_header()?;
-    writer.write_image_data(pixels)
+    writer.write_image_data(pixels)?;
+
+    // Write the trailing chunk and flush the underlying writer; dropping the
+    // writer would ignore these errors, so they must propagate.
+    writer.finish()?;
+    w.flush()?;
+    Ok(())
 }
 
 pub fn output_matches_name(output: &Output, target: &str) -> bool {
@@ -647,6 +659,70 @@ mod tests {
     use approx::assert_abs_diff_eq;
 
     use super::*;
+
+    #[test]
+    fn screenshot_path_uses_export_extension_and_preserves_disabled_saving() {
+        use niri_ipc::ScreenshotFormat;
+
+        for (template, expected) in [
+            ("/shots/capture.png", "/shots/capture.webp"),
+            ("/shots/{ext}/capture.{ext}", "/shots/webp/capture.webp"),
+            ("/shots/capture", "/shots/capture.webp"),
+        ] {
+            let config = Config::parse_mem(&format!("screenshot-path {template:?}")).unwrap();
+            assert_eq!(
+                make_screenshot_path(&config, ScreenshotFormat::Webp).unwrap(),
+                Some(PathBuf::from(expected)),
+            );
+        }
+        let config = Config::parse_mem("screenshot-path null").unwrap();
+        assert_eq!(
+            make_screenshot_path(&config, ScreenshotFormat::Avif).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn write_png_rgba8_propagates_trailing_chunk_errors() {
+        struct TrailingChunkFail;
+
+        impl Write for TrailingChunkFail {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                if buf.windows(4).any(|bytes| bytes == b"IEND") {
+                    return Err(std::io::ErrorKind::BrokenPipe.into());
+                }
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let error = write_png_rgba8(TrailingChunkFail, 2, 3, &[0u8; 2 * 3 * 4]).unwrap_err();
+        assert!(matches!(error, png::EncodingError::IoError(error)
+            if error.kind() == std::io::ErrorKind::BrokenPipe));
+    }
+
+    #[test]
+    fn write_png_rgba8_propagates_flush_errors() {
+        struct FlushFail;
+
+        impl Write for FlushFail {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::other("flush failed"))
+            }
+        }
+
+        // A sink whose flush fails used to report success: Writer::drop wrote
+        // IEND and a BufWriter drop flushed silently, both ignoring errors.
+        let rv = write_png_rgba8(FlushFail, 2, 3, &[0u8; 2 * 3 * 4]);
+        assert!(rv.is_err());
+    }
 
     fn assert_rect_eq(actual: Rectangle<f64, Logical>, expected: Rectangle<f64, Logical>) {
         assert_abs_diff_eq!(actual.loc.x, expected.loc.x);

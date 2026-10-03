@@ -1,72 +1,107 @@
-# Screenshot: конфигурация, управление и реализация
+# Screenshot: configuration, controls and implementation
 
-## Статус и границы
+## Status and scope
 
-Это спецификация будущей реализации, а не описание уже доступного API.
-Редактор, рисование, blur, история, панель и лупа уже работают. Приведённые
-ниже блок `screenshot` и новые действия ещё не поддерживаются текущим
-конфигурационным декодером. Синтаксическая корректность KDL не означает,
-что пример можно сейчас вставить в рабочий конфиг.
+This document describes the implemented built-in screenshot editor, its KDL settings,
+bindings and IPC API. The editor uses Cairo for strokes and the toolbar, the existing
+GPU blur, and a shared composition for the preview, magnifier and export.
 
-Цель: позволить менять оформление, бинды и поведение без отдельного UI-фреймворка,
-универсального движка тем или второй системы биндов.
+Select, Draw, Arrow, Rectangle and Blur are implemented. Text input is not implemented
+and is outside the current contract.
 
-Согласованные решения:
+The goal is to customize appearance, bindings and behavior without a separate UI
+framework, a universal theme engine or a second binding system.
 
-- Основной корневой блок называется `screenshot`, не `screenshot-ui`.
-- Все сочетания задаются в существующем корневом `binds`, не внутри `screenshot`.
-- Секции `editor` нет: начальный инструмент и включение курсора — аргументы
-  действия открытия `screenshot`.
-- Палитра встроена в кнопку кисти. Текущий цвет показан горизонтальной полоской
-  снизу, с той же геометрией, что у индикатора курсора.
-- У лупы независимые начальный масштаб, порог видимости и порог сетки.
-  Отдельного переключателя/бинда «показать лупу» нет.
-- Шаг изменения масштаба задаётся аргументом действия в бинде.
-- Отступы задаются для четырёх сторон.
-- Настройки сохранения `screenshot-path` и анимации `screenshot-ui-open` остаются
-  в существующих разделах. Не дублировать их.
+Agreed decisions:
 
-## Карта изменений
+- The root block is named `screenshot`, not `screenshot-ui`.
+- All shortcuts belong in the existing root `binds` block, not inside `screenshot`.
+- There is no `editor` section: the initial tool and captured-pointer visibility are
+  arguments of the opening `screenshot` action.
+- Brush, Arrow and Rectangle have independent colors, widths and palettes, without
+  inheriting brush settings. A stripe at the bottom of each button shows its color;
+  a number at the top right shows its width. Reactivating the selected button toggles
+  its palette only with `open-palette-on-click=true`; `screenshot-tool` never opens it.
+- The magnifier has independent initial zoom, visibility and grid thresholds.
+  There is no separate "show magnifier" toggle or binding.
+- The zoom adjustment step is an action argument in the binding.
+- Margins are specified independently for all four sides.
+- `screenshot-path` and `screenshot-format` remain root settings;
+  `screenshot-ui-open` stays in the existing animations section.
+- Blur shows its level using three bottom segments filled from left to right.
+  `screenshot-context` adjusts the keyboard-focused tool, falling back to the tool
+  under the pointer, without selecting it or wrapping values; for Blur it adjusts
+  strength. The tooltip names the level.
+- The shared axes mode applies to Brush, Arrow and Rectangle. Its separate indicator
+  is before Copy/Save. Both dashed guides have the same color and opacity.
+- Before a drag, the intersection follows the pointer. During a drag it is fixed;
+  `switch-threshold` defines the ray-switching zone in logical pixels. Drawing
+  coordinates are constrained, not the system pointer.
+- Releasing and pressing hold again during a drag moves the intersection to the
+  current drawing point without a jump. The shape's origin stays unchanged; only
+  releasing the mouse completes the edit. A rectangle can therefore be drawn in one
+  drag: width, reanchor, height.
+- `screenshot-context` first uses keyboard focus from `screenshot-focus-next` /
+  `screenshot-focus-previous`, then the pointer. A focused tool adjusts its parameter
+  without becoming selected; Select and other UI controls block the command. Pointer
+  movement clears focus. All pointer-routing rules below apply only without keyboard
+  focus. Explicit `screenshot-magnifier-zoom` is independent of focus.
+- `screenshot.axes` settings: `color "#80c7ff"`, `opacity 0.4`, `width 1`,
+  `dash-length 6`, `dash-gap 4`, `switch-threshold 8`. All dimensions are positive
+  logical pixels. Guides and the brush outline belong only to Overlay UI, not export.
+- One axes command serves both modes: `screenshot-toggle-axes` toggles the state;
+  `screenshot-toggle-axes hold=true` temporarily enables it until the physical control
+  is released. `hold=false` is the default; IPC supports only toggle. The separate
+  `screenshot-axes-hold` command no longer exists.
+- The block is named `axes`, not `axis`, and has no `enabled` setting. Each session
+  starts with axes disabled.
 
-| Файл | Ответственность будущего изменения |
-|---|---|
-| `niri-config/src/lib.rs` | Поле `Config::screenshot`, включение декодирования и дефолтов |
-| `niri-config/src/screenshot.rs` (новый) | Типизированная схема, значения по умолчанию и проверка диапазонов |
-| `niri-config/src/binds.rs` | Декодирование действий, аргумент `tool`, классификация локальных действий |
-| `niri-ipc/src/lib.rs` | Соответствующие IPC/CLI-действия и типы аргументов |
-| `src/input/mod.rs` | Приоритет локальных биндов, клавиатура, колесо, удержание клавиши перемещения |
-| `src/ui/screenshot_ui.rs` | Сессия, выделение, применение настроек, команды и композиция |
-| `src/ui/screenshot_editor.rs` | Штрихи, blur, палитра, геометрия/тема панели, кэши |
-| `src/render_helpers/shaders/screenshot_magnifier.frag` | Uniform-параметры порога сетки и перекрёстной подсветки |
-| `src/niri.rs` | Передача аргументов открытия; сохранение существующего пути экспорта |
-| `resources/default-config.kdl`, `resources/knit-desktop.kdl` | Явные примеры новых биндов |
-| `src/tests/screenshot_editor.rs`, `src/tests/binds.rs` | Поведение, пиксели, границы input ownership |
+## Implementation map
 
-Существующие конфигурационные примитивы цветов, чисел и изменений размеров
-переиспользовать, а не вводить альтернативный парсер.
+| File | Responsibility |
+| --- | --- |
+| `niri-config/src/lib.rs` | `Config::screenshot`, decoding and defaults |
+| `niri-config/src/screenshot.rs` | Typed schema, defaults and range validation |
+| `niri-config/src/binds.rs` | Action decoding, the `tool` argument and editor-local action classification |
+| `niri-ipc/src/lib.rs` | Corresponding IPC/CLI actions and argument types |
+| `src/input/mod.rs` | Local binding priority, keyboard, wheel and physical ownership of move/axes holds |
+| `src/ui/screenshot_ui.rs` | Session, selection, settings application, commands and composition |
+| `src/ui/screenshot_editor.rs` | Strokes, arrows, rectangles, blur, independent tool parameters, palette and toolbar caches |
+| `src/ui/screenshot_axes.rs` | Toggle/hold, independent anchor and ray projection |
+| `src/ui/screenshot_guides.rs` | Cached guide strips and brush outline |
+| `src/render_helpers/shaders/screenshot_magnifier.frag` | Grid-threshold and cross-highlight uniforms |
+| `src/niri.rs` | Opening arguments and preservation of the existing export path |
+| `resources/default-config.kdl`, `resources/knit-desktop.kdl` | Explicit examples of the new bindings |
+| `src/tests/screenshot_editor.rs`, `src/tests/screenshot_shapes.rs`, `src/tests/binds.rs` | Behavior, pixels, shapes, context and input ownership boundaries |
 
-## Пример основного блока
+Reuse existing configuration primitives for colors, numbers and size changes rather
+than introducing an alternative parser.
 
-Пример задаёт целевые значения по умолчанию. Размеры UI — логические пиксели;
-толщина кисти и смещение/размер выделения — пиксели frozen frame. HEX с восемью
-цифрами имеет вид `#RRGGBBAA`. Альфа цвета умножается на непрозрачность элемента.
+## Main configuration example
+
+This example uses the current defaults. UI dimensions are logical pixels; brush
+width and selection offsets/sizes use frozen-frame pixels. Eight-digit HEX uses
+`#RRGGBBAA`. Color alpha is multiplied by the element's opacity.
 
 ```kdl
+screenshot-path "~/Pictures/Screenshots/%Y-%m-%d_%H-%M-%S.{ext}"
+screenshot-format "png" // png, webp, avif.
+
 screenshot {
     toolbar {
-        // Сторона экрана [top, bottom].
+        // Screen edge [top, bottom].
         position "top"
-        // Выравнивание вдоль выбранной стороны [left, center, right].
+        // Alignment along the selected edge [left, center, right].
         align "center"
 
-        // Независимые минимальные отступы от четырёх краёв экрана.
+        // Independent minimum margins from the four screen edges.
         margin top=8 right=8 bottom=8 left=8
 
-        // Размер кнопки и SVG-иконки; высота панели вычисляется автоматически.
+        // Button and SVG icon sizes; toolbar height is calculated automatically.
         button-size 40
         icon-size 24
 
-        // Общая тема панели, палитры и подсказок.
+        // Shared toolbar, palette and tooltip theme.
         background-color "#12121a"
         border-color "#ffffff29"
         border-width 1
@@ -76,14 +111,14 @@ screenshot {
         hover-color "#ffffff1f"
         pressed-color "#00000059"
 
-        // Непрозрачность всей панели [0.0–1.0].
+        // Opacity of the entire toolbar [0.0–1.0].
         opacity 1.0
-        // Во время жеста; 1.0 при opacity=1.0 отключает затухание.
+        // During gestures; 1.0 with opacity=1.0 disables fading.
         drag-opacity 0.5
     }
 
     tooltips {
-        // Подсказки при наведении или фокусе [true, false].
+        // Show tooltips on hover or focus [true, false].
         enabled true
         font "Sans"
         font-size 11
@@ -92,82 +127,118 @@ screenshot {
     selection {
         border-color "#ffffff"
         border-width 2
-        // Затемнение применяется только к frozen frame вне выделения.
+        // Dimming applies only to the frozen frame outside the selection.
         dim-color "#000000"
         dim-opacity 0.5
-        // Восстанавливать прошлое выделение [true, false].
+        // Restore the previous selection [true, false].
         remember-selection true
     }
 
     brush {
-        // Толщина новых штрихов, в пикселях захваченного кадра.
+        // Width of new strokes, in captured-frame pixels.
         width 4
-        // Цвет новых штрихов при открытии редактора.
+        // Color of new strokes when the editor opens.
         color "#ff0000"
-        // От 1 до 7 непрозрачных цветов; номер соответствует позиции в списке.
+        // One to seven opaque colors; indices follow list order.
         palette "#ff0000" "#ff8000" "#ffe000" "#00c040" "#0080ff" "#ffffff" "#000000"
-        // Нажатие на кнопку кисти открывает/закрывает палитру [true, false].
+        // Reactivating the selected brush toggles its palette [true, false].
         open-palette-on-click true
-        // Закрывать палитру после выбора цвета [true, false].
+        // Close the palette after selecting a color [true, false].
         close-palette-on-select true
     }
 
+    arrow {
+        width 4
+        color "#ff0000"
+        palette "#ff0000" "#ff8000" "#ffe000" "#00c040" "#0080ff" "#ffffff" "#000000"
+        open-palette-on-click true
+        close-palette-on-select true
+    }
+
+    rectangle {
+        width 4
+        color "#ff0000"
+        palette "#ff0000" "#ff8000" "#ffe000" "#00c040" "#0080ff" "#ffffff" "#000000"
+        open-palette-on-click true
+        close-palette-on-select true
+    }
+
+    axes {
+        color "#80c7ff"
+        opacity 0.4
+        width 1
+        dash-length 6
+        dash-gap 4
+        switch-threshold 8
+    }
+
     blur {
-        // Сила размытия [low, medium, high].
+        // Blur strength [low, medium, high].
         strength "medium"
     }
 
     magnifier {
         diameter 192
+        // Inward border width in logical pixels; 0 disables it.
+        border-width 2
+        border-color "#ffffff"
+        // Grid color with alpha, independent of the row/column highlight.
+        grid-color "#0000008c"
         pointer-gap 16
-        // Масштаб при каждом открытии [1, 2, 4, 8, 16, 32].
+        // Zoom on each opening [1, 2, 4, 8, 16, 32].
         initial-zoom 1
-        // Лупа видна начиная с этого масштаба [2, 4, 8, 16, 32].
+        // The lens is visible from this zoom level [2, 4, 8, 16, 32].
         show-from 2
-        // Верхняя граница увеличения [2, 4, 8, 16, 32].
+        // Maximum zoom [2, 4, 8, 16, 32].
         max-zoom 32
-        // Показывать пиксельную сетку [true, false].
+        // Show the pixel grid [true, false].
         grid true
-        // Независимый порог сетки [2, 4, 8, 16, 32].
+        // Independent grid threshold [2, 4, 8, 16, 32].
         grid-from 4
-        // Подсветка строки/столбца центрального пикселя [true, false].
+        // Highlight the center pixel's row and column [true, false].
         cross-highlight true
         cross-highlight-color "#a6d9f259"
     }
 }
 ```
 
-Для `top` используется верхний отступ, для `bottom` — нижний. При `left` и
-`right` используются соответствующие боковые отступы. Центрирование выполняется
-в доступном прямоугольнике между отступами: разные `left`/`right` сдвигают центр.
-На маленьком output панель равномерно уменьшается, а не переносит кнопки.
-Палитра и подсказки открываются в сторону центра экрана: вниз от верхней панели,
-вверх от нижней. Их позиция ограничивается доступной областью.
+`top` uses the top margin; `bottom` uses the bottom margin. `left` and `right` use
+the corresponding side margins. Centering uses the available rectangle between the
+margins, so unequal `left`/`right` values shift its center. On small outputs the
+toolbar scales down uniformly rather than wrapping buttons. Palettes and tooltips
+open toward the screen center: below a top toolbar and above a bottom toolbar.
+Their positions are constrained to the available area.
 
-`drag-opacity` — абсолютная непрозрачность, не множитель `opacity`. Она действует
-при выделении, перемещении выделения, рисовании и blur. Нажатия на кнопки и
-выбор цвета её не включают. Release/cancel возвращают обычную непрозрачность.
+`drag-opacity` is an absolute opacity, not a multiplier of `opacity`. It applies
+while selecting, moving the selection, drawing or blurring. Button presses and
+color selection do not enable it. Release/cancel restores normal opacity.
 
-## Пример отдельного блока биндов
+## Separate bindings example
 
-Это корневой сосед `screenshot`. Начальный инструмент относится к конкретному
-способу открытия, а не к общему оформлению. `show-pointer` уже существует;
-`tool` и большинство локальных действий ниже — новые контракты.
+This is a root-level sibling of `screenshot`. The initial tool belongs to a specific
+opening action, not general appearance. `show-pointer` already exists; `tool` and
+the local actions below support KDL, CLI and IPC, except physical hold modes, which
+are available only in bindings.
 
 ```kdl
 binds {
-    // Открытие: инструмент [select, draw, blur], курсор в снимке [true, false].
+    // Open: [select, draw, arrow, rectangle, blur], pointer [true, false].
     Alt+U { screenshot tool="select" show-pointer=false; }
     Alt+Shift+U { screenshot tool="draw" show-pointer=false; }
 
-    // Далее — действия только для открытого screenshot editor.
-    // Клавиша выбора кисти не открывает палитру.
+    // The following actions apply only while the screenshot editor is open.
+    // Selecting the brush with a key does not open its palette.
     V { screenshot-tool "select"; }
     B { screenshot-tool "draw"; }
+    A { screenshot-tool "arrow"; }
+    D { screenshot-tool "rectangle"; }
+    X repeat=false { screenshot-toggle-axes; }
+    Shift_L repeat=false { screenshot-toggle-axes hold=true; }
+    MouseRight repeat=false { screenshot-toggle-axes hold=true; }
     R { screenshot-tool "blur"; }
     C { screenshot-toggle-palette; }
 
-    // Выбор цвета по позиции; работает только при открытой палитре.
+    // Select a color by position; only works while the palette is open.
     "1" { screenshot-palette-color 1; }
     "2" { screenshot-palette-color 2; }
     "3" { screenshot-palette-color 3; }
@@ -176,373 +247,463 @@ binds {
     "6" { screenshot-palette-color 6; }
     "7" { screenshot-palette-color 7; }
 
-    // Толщина: число задаёт абсолютное значение, строка со знаком — приращение.
-    Minus { screenshot-brush-width "-1"; }
-    Equal { screenshot-brush-width "+1"; }
+    // Keyboard focus first, otherwise the pointer: a number is absolute,
+    // a signed string is an adjustment. Brush/Arrow/Rectangle width: 1–128;
+    // Blur level: 1–3. Select and other UI are no-ops without zoom;
+    // the canvas changes lens zoom. The selected tool does not change.
+    Minus { screenshot-context "-1"; }
+    Equal { screenshot-context "+1"; }
 
     Ctrl+Z { screenshot-undo; }
     Ctrl+Shift+Z { screenshot-redo; }
     Ctrl+Y { screenshot-redo; }
     P { screenshot-toggle-pointer; }
 
-    // Копирование без файла / сохранение с копированием.
+    // Copy without a file / save and copy.
     Ctrl+C { confirm-screenshot write-to-disk=false; }
     Ctrl+S { confirm-screenshot write-to-disk=true; }
-    // Активировать кнопку в фокусе; без фокуса — сохранить и скопировать.
+    // One-shot format override: does not change the config or future exports.
+    Ctrl+Alt+P { confirm-screenshot format="png"; }
+    Ctrl+Alt+W { confirm-screenshot format="webp"; }
+    Ctrl+Alt+A { confirm-screenshot format="avif"; }
+    // Activate the focused button; without focus, save and copy.
     Return { screenshot-confirm; }
-    // Закрыть палитру → отменить текущий жест → закрыть редактор.
+    // Close palette → cancel the current gesture → close editor.
     Escape { screenshot-cancel; }
+    Ctrl+Escape { cancel-screenshot; }
 
-    // Приращения позиции выделения, в пикселях frozen frame.
+    // Selection position adjustments, in frozen-frame pixels.
     Left { screenshot-move-selection x=-1 y=0; }
     Right { screenshot-move-selection x=1 y=0; }
     Up { screenshot-move-selection x=0 y=-1; }
     Down { screenshot-move-selection x=0 y=1; }
-    // Более крупный шаг задаётся непосредственно в другом бинде.
+    // A larger step is specified directly in another binding.
     Ctrl+Left { screenshot-move-selection x=-20 y=0; }
     Ctrl+Right { screenshot-move-selection x=20 y=0; }
 
-    // Приращения размеров; верхний левый угол остаётся на месте.
+    // Size adjustments; the top-left corner stays in place.
     Shift+Left { screenshot-resize-selection width=-1 height=0; }
     Shift+Right { screenshot-resize-selection width=1 height=0; }
     Shift+Up { screenshot-resize-selection width=0 height=-1; }
     Shift+Down { screenshot-resize-selection width=0 height=1; }
 
-    // Удерживать во время перетаскивания выделения; Space не сохраняет снимок.
+    // Hold while dragging the selection; Space does not save the screenshot.
     Space repeat=false { screenshot-move-selection-hold; }
 
-    // Одна ступень: 1× → 2× → 4× → 8× → 16× → 32×.
-    // "+2"/"-2" переключают через ступень; отдельного scroll-step нет.
-    WheelScrollUp { screenshot-magnifier-zoom "+1"; }
-    WheelScrollDown { screenshot-magnifier-zoom "-1"; }
+    // Keyboard focus first; otherwise a tool button adjusts its parameter,
+    // and the canvas steps zoom through 1× → 2× → 4× → 8× → 16× → 32×.
+    // "+2"/"-2" skip a step; there is no separate scroll-step setting.
+    WheelScrollUp { screenshot-context "+1"; }
+    WheelScrollDown { screenshot-context "-1"; }
+    // Explicit zoom is independent of focus and hover.
+    Ctrl+WheelScrollUp { screenshot-magnifier-zoom "+1"; }
+    Ctrl+WheelScrollDown { screenshot-magnifier-zoom "-1"; }
 
     Tab { screenshot-focus-next; }
     Shift+Tab { screenshot-focus-previous; }
 }
 ```
 
-### Семантика действий и приоритеты
+### Action semantics and priorities
 
-1. Дополнить существующую `Action`, её KDL-декодирование, IPC-конверсию и CLI.
-   Не вводить отдельный парсер сочетаний. `Tool` и сила blur — enum;
-   параметры команд и штрихов — именованные payload-структуры.
-2. `screenshot tool=… show-pointer=…` открывает редактор. Отсутствующий `tool`
-   означает Select; существующий default `show-pointer=true` сохраняется.
-   Пример выше явно выключает курсор. Уже открытая сессия не переоткрывается.
-3. Остальные screenshot-действия локальные: при закрытом редакторе они исключаются
-   из поиска бинда **до** выбора совпадения. Они не поглощают press/release клиента.
-   При открытом редакторе локальные бинды приоритетнее обычных.
-4. Сейчас декодер запрещает повтор одного `Key`. Для сосуществования обычного и
-   screenshot-бинда разрешить один `Key` в каждой из двух категорий, определяемых
-   действием; повтор внутри категории остаётся ошибкой. Не добавлять универсальные
-   пользовательские modes/scopes. При закрытом UI выбирается обычный бинд.
-5. Сохранить разрешённые compositor-действия, например управление громкостью,
-   и маршрутизацию уже работающих команд перемещения/размера выделения.
-   Не переназначать их на рабочий стол, пока открыт редактор.
-6. Удалить приоритетный hardcoded-перехват `V/B/R/C/Enter/Space` и других локальных
-   клавиш. Стандартные сочетания записать в поставляемые конфиги. Не оставлять
-   скрытые дубли после remap: отсутствие локального бинда означает отсутствие
-   клавиатурного действия, а не возврат к старому hardcode. При миграции
-   пользователь получает явный блок стандартных биндов.
-7. Кнопки и бинды используют одни доменные команды. Подсказки показывают реальные
-   настроенные сочетания; без бинда — только название действия. Надписи не должны
-   продолжать обещать старые `B` или `C` после переназначения.
-8. Колесо направляется в тот же поиск биндов, с существующими правилами направления
-   прокрутки. High-resolution delta аккумулируется существующим ScrollTracker:
-   одна нормализованная ступень колеса — одно выполнение действия. Знак и величина
-   `+N/-N` относятся к ступеням масштаба, не к пикселям и не к абсолютному zoom.
-   Не выполнять одновременно старый прямой scroll-handler и новый бинд.
-9. Пока редактор открыт, колесо не меняет desktop zoom и не доходит до приложений,
-   даже если локальный wheel-бинд отсутствует. При выходе desktop zoom неизменён.
-10. Удержание перемещения принадлежит физической клавише: сохранить keycode на press,
-    очистить на release даже при смене модификаторов, reload или подавлении события.
-    Закрытие/отмена сессии также очищает удержание. IPC не синтезирует бесконечный
-    key-hold: для него используются команды смещения, а не hold-действие.
-11. `screenshot-tool` выбирает инструмент без раскрытия палитры. Клик/Enter на
-    кнопке кисти учитывает `open-palette-on-click`. Если false, только выбирает
-    кисть; `screenshot-toggle-palette` остаётся доступным для Draw.
-12. При `close-palette-on-select=false` палитра остаётся открытой, фокус остаётся на
-    выбранном образце. При true она закрывается и фокус возвращается на кисть.
-    Клик вне палитры только закрывает её, не начинает штрих. Не существующий в
-    текущей палитре номер цвета не меняет состояние.
-13. Confirm/export во время незавершённого жеста не сохраняет частичную правку.
-    Cancel сначала закрывает палитру, затем отменяет жест с восстановлением crop,
-    затем закрывает UI. Undo активного штриха отменяет его, не предыдущую правку.
+1. Commands use the existing `Action`, KDL decoding, IPC conversion and CLI.
+   `Tool` and blur strength are enums; command and stroke parameters use named payloads.
+2. `screenshot tool=… show-pointer=…` opens the editor. Omitting `tool` means Select;
+   the existing `show-pointer=true` default is preserved. The example above explicitly
+   hides the pointer. An already open session is not reopened.
+3. Other screenshot editor actions are local: when the editor is closed, they are
+   excluded from binding lookup **before** selecting a match. They do not consume
+   client press/release events. While the editor is open, local bindings take
+   precedence over ordinary bindings.
+4. A `Key` may occur once in each of two categories: ordinary and screenshot actions.
+   A duplicate within one category is an error. With the UI closed, the ordinary
+   binding is selected.
+5. Preserve permitted compositor actions, such as volume controls, and the routing
+   of existing selection move/resize commands. Do not redirect them to the desktop
+   while the editor is open.
+6. There is no hardcoded interception of V/B/R/C/Enter/Space. Standard shortcuts are
+   defined in the supplied configs; existing user configs need the local bindings
+   from the example above. No binding means no action.
+7. Buttons and bindings use the same domain commands. Tooltips show the actual
+   configured shortcuts, or just the action name when no binding exists. Labels must
+   not continue advertising old `B` or `C` shortcuts after remapping.
+8. Wheel input uses the same binding lookup and existing scroll-direction rules.
+   The existing ScrollTracker accumulates high-resolution deltas: one normalized
+   wheel step executes one action. The supplied wheel binding is `screenshot-context`:
+   keyboard focus takes priority, otherwise pointer hit-testing determines the target.
+   A tool button adjusts its own parameter; Select and other UI controls absorb the
+   command. Without focus the canvas changes zoom; without focus or a pointer it is
+   a no-op. Pointer movement clears keyboard focus. Over the canvas, `+N/-N` specifies
+   the number of zoom steps. Explicit `screenshot-magnifier-zoom` is independent of
+   both focus and hit-testing. Do not execute an old direct scroll handler alongside
+   the new binding.
+9. While the editor is open, wheel input neither changes desktop zoom nor reaches
+   applications, even without a local wheel binding. Desktop zoom is unchanged on exit.
+10. Selection-move hold belongs to the physical key: store its keycode on press and
+    clear it on release even after modifier changes, reload or event suppression.
+    Closing/canceling the session also clears the hold. IPC does not synthesize an
+    endless key hold: use movement commands, not a hold action.
+11. `screenshot-tool` selects a tool without opening its palette. Repeated activation
+    or Enter on the active Brush, Arrow or Rectangle respects its
+    `open-palette-on-click`. The shared `screenshot-toggle-palette` command opens the
+    active colored tool's palette.
+12. With `close-palette-on-select=false`, the palette stays open and focus stays on the
+    selected swatch; otherwise it closes and focus returns to its tool. A click outside
+    the palette only closes it, without starting a stroke. A color index absent from
+    the current palette does not change state.
+13. Confirm/export during an unfinished gesture does not save a partial edit. Cancel
+    first closes the palette, then cancels the gesture and restores the crop, then
+    closes the UI. Undo during a stroke cancels that stroke, not the previous edit.
+14. `screenshot-toggle-axes hold=true` tracks the hold owner: a key, mouse button or
+    stylus button. An unrelated release does not end the hold; with multiple owners,
+    axes stay enabled until the last release. Hold does not repeat even with
+    `repeat=true`. Wheel/touchpad scroll triggers have no release and are rejected.
+    Without `hold`, or with `hold=false`, the command toggles the persistent state.
 
-## IPC-контракт редактора
+## Editor IPC contract
 
-Это проект API: перечисленные новые команды ещё не реализованы. Используем
-существующие `Request::Action` → `niri_ipc::Action` → `niri_config::Action`
-и CLI `niri msg action`. Отдельный сокет, протокол или namespace редактора
-не нужны. KDL, IPC и кнопки вызывают одни доменные команды, без эмуляции ввода.
+The editor uses the existing `Request::Action` → `niri_ipc::Action` →
+`niri_config::Action` → `niri msg action` chain. KDL, IPC and buttons invoke the same
+domain commands; there is no separate socket, protocol or namespace.
 
-### Команды и аргументы
+### Commands and arguments
 
-В таблице опущен общий префикс `niri msg action`. Имена kebab-case относятся
-к CLI/KDL; JSON сохраняет существующие PascalCase-варианты и snake_case-поля.
+The common `niri msg action` prefix is omitted below. Kebab-case names refer to
+CLI/KDL; JSON retains the existing PascalCase variants and snake_case fields.
 
-| CLI | Контракт |
+| CLI | Contract |
 | --- | --- |
-| `screenshot --tool draw --show-pointer false --path /tmp/shot.png` | Открыть редактор. Все аргументы необязательны: `tool=select`, `show-pointer=true`, путь из существующей настройки. `tool`: `select`, `draw`, `blur`. Если уже открыт — ничего не менять, в том числе аргументы сессии. |
-| `screenshot-tool draw` | Выбрать инструмент без открытия палитры. Закрыть палитру предыдущего инструмента. |
-| `screenshot-toggle-palette` | Переключить палитру только при активной кисти. |
-| `screenshot-set-palette true` | Явно открыть/закрыть палитру. Открытие вне Draw — no-op; инструмент не переключается неявно. |
-| `screenshot-palette-color 3` | Выбрать образец по номеру, начиная с 1; только при открытой палитре. Применить `close-palette-on-select`. |
-| `screenshot-brush-color "#0080ff"` | Установить непрозрачный RGB напрямую, независимо от палитры и инструмента. Палитру и инструмент не переключать. |
-| `screenshot-brush-width 6` | Установить толщину в пикселях кадра. Строки `+1`/`-1` задают приращение; пределы 1–128. |
-| `screenshot-undo` / `screenshot-redo` | Общая история правок; пустой стек — no-op. Undo во время canvas-жеста отменяет только этот жест, не предыдущую правку. |
-| `screenshot-toggle-pointer` | Переключить захваченный указатель в изображении, не системный указатель редактора. |
-| `screenshot-set-pointer false` | Явно установить то же состояние, без toggle. |
-| `screenshot-move-selection --x -20 --y 0` | Сместить crop в физических пикселях captured output; пропущенная ось равна 0. Размер сохраняется, позиция ограничена кадром. |
-| `screenshot-resize-selection --width 20 --height 0` | Приращения размера crop; пропущенная ось равна 0. Верхний левый угол закреплён, минимум 1×1, максимум до границы кадра. |
-| `screenshot-magnifier-zoom 4` | Установить увеличение 4×; абсолютные значения 1, 2, 4, 8, 16, 32. `+1`/`-1` меняют число ступеней, не коэффициент; ограничение текущим `max-zoom`. |
-| `screenshot-focus-next` / `screenshot-focus-previous` | Перейти между доступными контролами; при открытой палитре включить образцы в порядок обхода. |
-| `screenshot-confirm` | Эквивалент Enter: активировать контрол в фокусе; если фокуса нет — сохранить и скопировать. Не использовать как безусловное сохранение из скрипта. |
-| `confirm-screenshot --write-to-disk true` | Безусловно экспортировать crop и скопировать; `false` — только clipboard. Фокус и палитра не меняют назначение команды. По умолчанию `true`. Путь берётся из открытия сессии; не добавлять второй источник пути. |
-| `screenshot-cancel` | Один шаг Escape: закрыть палитру → отменить жест с восстановлением crop → закрыть UI. |
-| `cancel-screenshot` | Безусловно закрыть редактор без экспорта и отбросить правки; в отличие от поэтапного `screenshot-cancel`. Уже существующее внутреннее действие нужно экспортировать в IPC. |
+| `screenshot --tool draw --show-pointer false --path /tmp/shot.png` | Open the editor. `tool`: `select`, `draw`, `arrow`, `rectangle`, `blur`; defaults to `select`. An already open session is unchanged. |
+| `screenshot-tool draw` | Select a tool without opening its palette. Close the previous tool's palette. |
+| `screenshot-toggle-palette` | Toggle the active Brush, Arrow or Rectangle palette. |
+| `screenshot-set-palette true` | Explicitly open/close the active colored tool's palette; opening in Select/Blur is a no-op. |
+| `screenshot-palette-color 3` | Select a one-based swatch index; only while the palette is open. Apply `close-palette-on-select`. |
+| `screenshot-brush-color "#0080ff"` | Set opaque RGB directly, independently of palette and selected tool. Do not toggle the palette or switch tools. |
+| `screenshot-arrow-color "#00ff00"` / `screenshot-rectangle-color "#0080ff"` | Set the specified tool's own opaque color. |
+| `screenshot-context "-1"` / `screenshot-context 8` | Keyboard focus first, then the pointer. Draw/Arrow/Rectangle adjust their own width (1–128), Blur its strength (1–3), without selecting the tool. Select and other UI are no-ops without zoom. With no focus the canvas changes lens zoom; without focus or a pointer it is a no-op. A number sets an absolute value from 1–128; a signed string adjusts. The result clamps to the target range; zoom rounds down to a power of two within `max-zoom`. Pointer movement clears focus. |
+| `screenshot-toggle-axes` / `screenshot-set-axes true` | Shared axes mode. Does not complete a gesture; switching tools does not reset it. |
+| `screenshot-toggle-axes hold=true` (KDL only, not CLI/IPC) | Hold a key, mouse button or stylus button. Releasing the last owner restores toggle state; pressing again reanchors the current gesture. |
+| `screenshot-undo` / `screenshot-redo` | Shared edit history; an empty stack is a no-op. Undo during a canvas gesture cancels only that gesture, not the previous edit. |
+| `screenshot-toggle-pointer` | Toggle the captured pointer in the image, not the editor's system pointer. |
+| `screenshot-set-pointer false` | Explicitly set the same state without toggling. |
+| `screenshot-move-selection --x -20 --y 0` | Move the crop in physical captured-output pixels; omitted axes default to 0. Preserve size and clamp position to the frame. |
+| `screenshot-resize-selection --width 20 --height 0` | Adjust crop size; omitted axes default to 0. Keep the top-left corner fixed, with a minimum of 1×1 and a maximum at the frame boundary. |
+| `screenshot-magnifier-zoom 4` | Set 4× zoom; absolute values are 1, 2, 4, 8, 16, 32. `+1`/`-1` adjust the number of steps, not the coefficient; clamp to the current `max-zoom`. |
+| `screenshot-focus-next` / `screenshot-focus-previous` | Navigate available controls; include swatches in the focus order while the palette is open. |
+| `screenshot-confirm` | Equivalent to Enter: activate the focused control, or save and copy without focus. Do not use as unconditional saving from a script. |
+| `confirm-screenshot --write-to-disk true [--format FORMAT] [--quality QUALITY]` | Export the crop and copy regardless of focus; `false` means PNG clipboard only. Format precedence: explicit argument → current `screenshot-format` → PNG. Supported formats: png, webp, avif. The path comes from session opening or `screenshot-path`. |
+| `screenshot-cancel` | One Escape step: close palette → cancel gesture and restore crop → close UI. |
+| `cancel-screenshot` | Immediately close the editor without export and discard edits, unlike the stepwise `screenshot-cancel`. Available through KDL, CLI and IPC. |
 
-`screenshot-screen` и `screenshot-window` сохраняют прежние аргументы и
-семантику: не открывают редактор, не экспортируют его Canvas, не получают `tool`.
-`screenshot-move-selection-hold` в IPC **не экспортируется**: у IPC нет парного
-физического release. Для перемещения используются команды с приращениями.
-Отдельную команду show/hide лупы не вводим: видимость определяется zoom и
-`show-from`. Оформление и параметры blur меняются конфигом, не дублируются
-набором IPC setters.
+`screenshot-screen` and `screenshot-window` retain their existing arguments and
+semantics: they do not open the editor, export its Canvas or accept `tool`.
+`screenshot-move-selection-hold` and the `hold=true` property of
+`screenshot-toggle-axes` are **not exposed through IPC**: IPC has no paired physical
+release. Use increments for movement and toggle or `screenshot-set-axes` for axes.
+Magnifier visibility follows zoom and `show-from`, with no separate show/hide action.
+Appearance is configured in KDL; current blur strength changes via `screenshot-context`.
 
-### Повторяемость и переходы состояния
+### Repeatability and state transitions
 
-- Все локальные команды при закрытом редакторе — no-op; они не открывают UI
-  и не запоминают настройки следующей сессии. Это сохраняет контракт Undo/Redo.
-- `set-pointer`, `set-palette`, абсолютная толщина, абсолютный zoom и RGB
-  идемпотентны: повторная команда не переключает состояние обратно. Toggle,
-  приращения, Undo/Redo и поэтапная отмена не идемпотентны.
-- Во время незавершённого жеста экспорт и `screenshot-confirm` — no-op. Нельзя
-  сохранять частичный штрих или незавершённый crop. Ошибка рендера сохраняет
-  открытый редактор и показывает существующее сообщение об ошибке.
-- Во время жеста смена инструмента, цвета, толщины, crop, фокуса, палитры и
-  Redo — no-op. Допустимы отмена, Undo для canvas-жеста, закрытие, изменение
-  zoom лупы и включения захваченного указателя. Undo при жесте выделения или
-  нажатии контрола — no-op; отмена такого жеста выполняется через cancel.
-- Текущие цвет, толщина, zoom и курсор принадлежат сессии: IPC не переписывает
-  конфиг и не создаёт скрытые постоянные настройки. Изменение цвета/толщины
-  не меняет уже завершённые штрихи.
-- Действуем над текущим selection output. Команды не принимают произвольный
-  output и не переносят crop между мониторами. Экранные logical coordinates
-  и desktop zoom не участвуют в вычислении приращений.
-- Блокировка сессии и разрешения проходят существующий action dispatcher;
-  IPC не получает отдельного обхода ограничений захвата.
+- All local commands are no-ops when the editor is closed: they neither open the UI
+  nor retain settings for the next session. This preserves the Undo/Redo contract.
+- `set-pointer`, `set-palette`, `set-axes`, absolute `screenshot-context`, absolute zoom
+  and RGB are idempotent: repeating them does not toggle state back. Toggle,
+  increments, Undo/Redo and stepwise cancellation are not idempotent.
+- Export and `screenshot-confirm` are no-ops during unfinished gestures. Do not save
+  partial strokes or unfinished crops. A rendering error leaves the editor open and
+  shows the existing error message.
+- During a gesture, tool/color/parameter/crop/focus/palette changes and Redo are no-ops:
+  `screenshot-context` does not change tool parameters mid-gesture. Cancellation,
+  Undo for canvas gestures, closing, lens zoom, axes state and captured-pointer
+  visibility changes remain available; canvas zoom through `screenshot-context`
+  also works during a drag. Undo during a selection gesture or control press is a
+  no-op; use cancel to undo such a gesture.
+- Current color, tool parameter, zoom and pointer visibility belong to the session:
+  IPC does not rewrite the config or create hidden persistent settings. Each tool
+  has its own current parameter value. Color/parameter changes do not alter completed
+  strokes.
+- Commands act on the current selection output. They do not accept an arbitrary
+  output or move the crop between monitors. Screen logical coordinates and desktop
+  zoom do not participate in increment calculations.
+- Session locking and permissions use the existing action dispatcher; IPC has no
+  separate route around capture restrictions.
 
-### Типы, проверка аргументов и ответы
+### Types, argument validation and replies
 
-`ScreenshotTool` — общий enum для KDL, clap и serde с вариантами
-`select`/`draw`/`blur`. Изменяемая величина представляется enum
-`Set(value)`/`Adjust(delta)`, не двумя конкурирующими optional-полями.
-На проводе абсолютное значение — число, приращение — строка со знаком.
-Для zoom абсолютное число обозначает коэффициент, для ширины — пиксели.
-Проценты не поддерживаются. Координатные приращения — знаковые целые.
-RGB принимается в форме `#RRGGBB`, без альфа-канала.
+`ScreenshotTool` is the shared KDL, clap and serde enum with
+`select`/`draw`/`arrow`/`rectangle`/`blur` variants. Adjustable values use the shared
+`ScreenshotValueChange` enum: `Set(value)`/`Adjust(delta)`. On the wire, absolute
+values are numbers and adjustments are signed strings. For zoom, a number denotes
+the coefficient. `screenshot-context` resolves its target through focus, then the
+pointer: Draw/Arrow/Rectangle width, Blur level or canvas zoom. Lens zoom rounds down
+to a power of two and clamps to `max-zoom`. RGB uses `#RRGGBB`, without alpha.
 
-Булевы аргументы CLI явно принимают `true`/`false`. Для отрицательных чисел
-и строк приращений clap должен разрешать leading hyphen, чтобы `-1` не
-интерпретировался как имя опции. Числа с переполнением и неверные enum, RGB,
-формат приращения или абсолютный zoom отклоняются до выполнения действия.
-Абсолютная ширина вне 1–128 — ошибка; относительное изменение упирается в
-границы. Индекс палитры вне 1–7 — ошибка; допустимый индекс отсутствующего
-в текущей палитре образца — no-op. Суммы вычислять без integer overflow.
+Boolean CLI arguments explicitly accept `true`/`false`. For negative numbers and
+adjustment strings, clap must allow a leading hyphen so that `-1` is not interpreted
+as an option name. Overflowing numbers and invalid enums, RGB, adjustment formats
+or absolute zoom values are rejected before execution. An absolute
+`screenshot-context` value outside 1–128 is an error: validation does not know the
+session context; runtime clamps to the target range (Blur 1–3, canvas zoom rounded
+down to a power of two within `[1, max-zoom]`). Relative adjustments stop at the target
+bounds without wrapping. Palette indices outside 1–7 are errors; valid indices absent
+from the current palette are no-ops. Calculate sums without integer overflow.
 
-Сохраняем текущий `Reply = Result<Response, String>`:
+Retain the existing `Reply = Result<Response, String>`:
 
-- Некорректный запрос/аргументы → существующий error reply и ненулевой exit
-  code CLI; проверка одинаковая для raw JSON и CLI.
-- Валидное действие → `Response::Handled` после обработки в event loop,
-  в том числе для no-op. Это **не** подтверждение изменения состояния и
-  **не** подтверждение записи PNG на диск.
-- Завершение захвата использует существующее событие `ScreenshotCaptured`;
-  не менять смысл его `path: null` (clipboard-only либо не-UTF-8 путь).
-  Событие не содержит request ID и не является коррелированным ответом на
-  конкретную команду при нескольких клиентах.
+- Invalid request/arguments → existing error reply and nonzero CLI exit code;
+  validation is identical for raw JSON and CLI.
+- Valid action → `Response::Handled` after event-loop processing, including no-ops.
+  This confirms **neither** a state change **nor** a file written to disk.
+- Capture completion uses the existing `ScreenshotCaptured` event; `path: null` means
+  no saved-file path is available. The event has no request ID and is not a correlated
+  reply to a specific command when multiple clients are active.
 
-В этом контракте не добавляем запрос состояния, новые события, session ID,
-ожидание файла или транзакционные batch-команды. Если потребуется внешний
-GUI или гарантированное подтверждение сохранения, это отдельное расширение
-Request/Response, а не переопределение `Handled`.
+This contract adds no state query, new events, session ID, file wait or transactional
+batch commands. An external GUI or guaranteed save confirmation would require a
+separate Request/Response extension, not a redefinition of `Handled`.
 
-Примеры **будущего** wire-формата:
+Wire-format examples:
 
 ```json
-{"Action":{"Screenshot":{"tool":"draw","show_pointer":false,"path":"/tmp/shot.png"}}}
+{
+  "Action": {
+    "Screenshot": {
+      "tool": "draw",
+      "show_pointer": false,
+      "path": "/tmp/shot.png"
+    }
+  }
+}
 ```
 
 ```json
-{"Action":{"ScreenshotSetPointer":{"show_pointer":false}}}
+{ "Action": { "ScreenshotSetPointer": { "show_pointer": false } } }
 ```
 
 ```json
-{"Action":{"ScreenshotBrushWidth":{"width":"+1"}}}
+{ "Action": { "ScreenshotContext": { "change": "+1" } } }
 ```
 
 ```json
-{"Action":{"ConfirmScreenshot":{"write_to_disk":true}}}
+{ "Action": { "ConfirmScreenshot": { "write_to_disk": true } } }
 ```
 
-В `Screenshot` отсутствующий `tool` десериализуется как Select, чтобы
-существующие запросы открытия продолжали работать; старые `show_pointer`
-и `path` не переименовывать. Для новых команд поля JSON: `tool`, `open`,
-`index`, `color`, `width`, `show_pointer`, `x`/`y`, `width`/`height`, `zoom`,
-`write_to_disk` соответственно. Безаргументные варианты сохраняют `{}`.
+In `Screenshot`, an omitted `tool` deserializes as Select so existing opening requests
+continue to work; do not rename the existing `show_pointer` and `path` fields. JSON
+fields for the new commands are `tool`, `open`, `index`, `color`, `change`,
+`show_pointer`, `enabled`, `x`/`y`, `width`/`height`, `zoom`, `write_to_disk`, `format`
+and `quality`. Argument-free variants retain `{}`.
 
-### Подключение и проверка реализации
+### Wiring and verification
 
-1. Добавить варианты/типы в `niri-ipc`, serde/clap/schema и KDL Action,
-   обновить конверсию и исчерпывающие match. Открытие расширить полем tool.
-2. Общую проверку аргументов подключить перед IPC-dispatch и при декодировании
-   KDL; state-dependent no-op оставить в редакторе. Не копировать реализацию
-   кисти/истории/выделения в IPC server.
-3. Локальные действия зарегистрировать в существующих screenshot-фильтрах
-   ввода; все реальные источники событий используют те же переходы.
-4. Проверить старый JSON открытия, raw JSON с неверными значениями, leading
-   hyphen в CLI, идемпотентные setters, закрытый UI, активный жест, края crop,
-   различие confirm/export и cancel/close.
-5. В запущенном вложенном compositor выполнить команды через настоящий
-   сокет: открыть → изменить параметры → нарисовать через ввод → undo/redo →
-   экспортировать. Проверить пиксели, отсутствие Overlay UI в PNG, clipboard
-   и файл; отдельно проверить, что ошибка экспорта не закрывает редактор.
+`Action::validate()` checks ranges identically for CLI and raw JSON before dispatch;
+KDL uses the same argument types. State-dependent no-ops remain in the editor.
+Local commands pass through the existing screenshot input filters.
 
-## Модель конфигурации и обновления
+Editor GPU regressions and a live X11/Mesa scenario have covered toolbar settings,
+RGB/width, Undo/Redo, remapping without hidden fallbacks, magnifier thresholds,
+palette, reload, PNG pixels, closed-UI no-ops and rejection of invalid CLI/JSON
+arguments.
 
-- `ScreenshotConfig` содержит небольшие структуры `Toolbar`, `Tooltips`,
-  `Selection`, `Brush`, `Blur`, `Magnifier`. Не смешивать их с `Editor`/`Gesture`.
-- Хранить конфигурационные defaults отдельно от текущих цвета, ширины и масштаба.
-  Аргументы открытия имеют приоритет только для `tool`/`show-pointer`.
-- Читать конфиг при открытии и обрабатывать его изменения существующим механизмом
-  reload. Не клонировать палитру/строки и не сравнивать всю структуру на каждом кадре.
-- При reload тема и геометрия меняются у открытого UI; палитра обновляется.
-  Текущий выбранный RGB сохраняется, даже если его убрали из палитры (тогда нет
-  выделенного образца). Фокус удалённого образца возвращается на кисть.
-- `brush.width`, `brush.color`, `initial-zoom` — defaults следующего открытия;
-  reload не сбрасывает текущий инструмент, цвет, ширину, историю или crop.
-  `remember-selection` влияет на следующее открытие.
-- Новый `max-zoom` ограничивает текущий масштаб; пороги и тема лупы применяются
-  сразу. Изменение blur влияет на новые blur-операции, не на уже сделанные.
-- Изменение биндов пересобирает отображаемые shortcuts. При активном жесте
-  безопаснее отложить смену геометрии/hit-test панели до release/cancel;
-  не менять цель кнопки между её нажатием и отпусканием.
+### Encoding and save paths
 
-### Диапазоны и ошибки
+`ScreenshotFormat` is the shared PNG/WebP/AVIF enum in config, CLI and IPC. Only
+`confirm-screenshot` accepts an override; the Save button and `screenshot-confirm`
+use the config. The opening action has no `format` argument, and the session has no
+separate format state. `screenshot-screen` and `screenshot-window` use the config.
 
-- Геометрия конечная: размеры кнопки, иконки, шрифта и лупы строго положительные;
-  отступы и ширина рамки неотрицательные. Иконка должна помещаться в кнопку.
-- Непрозрачности в `[0, 1]`; `drag-opacity <= opacity`.
-- Кисть: ширина `[1, 128]` пикселей; действия изменения ширины ограничиваются этим
-  диапазоном. Цвета кисти/палитры непрозрачные; alpha кисти в эту работу не входит.
-- Палитра содержит `[1, 7]` цветов. Верхняя граница сохраняет компактную строку
-  и существующее управление семью клавишами без нового layout-движка.
-- Масштабы — степени двойки из примера. `initial-zoom <= max-zoom`,
-  `show-from <= max-zoom`. `grid-from` может быть больше `max-zoom`: сетка тогда
-  не появляется до повышения максимума. Значение show-from=1 не принимается.
-- Размер выделения не меньше `1×1`, границы не выходят за frozen output.
-  Смещения/resize упираются в край без изменения масштаба изображения.
-- Неверный конфиг выдаёт существующую диагностику с местом ошибки. Не заменять
-  опечатки молча дефолтами; применять прежний рабочий конфиг по штатной политике reload.
+`{ext}` in `screenshot-path` is replaced with the selected extension; a legacy template
+extension is also normalized to the format. Explicit `--path` remains literal: an
+extension conflict is rejected, leaving the editor and path available for a corrected
+export.
 
-## Лупа: точные условия
+PNG is lossless. WebP defaults to lossless; `confirm-screenshot quality=…` from 0–100
+selects lossy encoding. AVIF uses `quality` 1–100 (default 90), speed 8, 8-bit, 4:4:4.
+Quality is fixed in `FileExport` when preparing that export; the next export returns
+to defaults. Clipboard data is always PNG. Encoding runs on the existing background
+thread; PNG data is reused for the clipboard and PNG file. There is no silent
+AVIF/WebP fallback to PNG. AVIF uses ravif/rav1e; optimized x86 builds require NASM.
+GNOME screenshot D-Bus saves PNG regardless of the setting.
 
-Масштаб сессии — `2^exponent`. Изменение `+N` повышает exponent на N и ограничивает
-его диапазоном `[0, log2(max-zoom)]`; `-N` уменьшает. На каждом открытии exponent
-инициализируется из `initial-zoom`, а не из предыдущей сессии.
+### Internal guarantees
+
+The internal request is `ExportRequest::ClipboardOnly` or
+`Save { path, format, quality }`. `ExportPlan::resolve` validates the path and resolves
+the config before closing the UI; the encapsulated `FileExport` binds the destination
+and selected format for the worker. `execute_action` returns only
+`EditorCommand::Export` or `Close`, not an arbitrary compositor action. External
+KDL/CLI/JSON contracts stay unchanged.
+
+An open session owns a single `Interaction`: Idle, Selection, Canvas, Toolbar or
+Overlay. Selection requires the original crop for cancellation and distinguishes
+creation from movement through `SelectionMode`. Editor has no second gesture state.
+Export readiness remains a dynamic check without typestate tokens.
+
+Each D-Bus request has its own `Result<PathBuf>` reply channel: a write error returns
+to its caller without taking the next request's reply. The PNG writer explicitly
+finishes the stream and checks flush before reporting success. Without a configured
+path, D-Bus creates `niri-screenshot-<random>.png` in temp_dir using `create_new`,
+retrying only on name collisions. A successful file remains available to the client;
+user-provided paths are not randomized.
+
+## Configuration and reload model
+
+- `ScreenshotConfig` contains toolbar, tooltips, selection, brush, arrow, rectangle,
+  blur, axes and magnifier; arrow/rectangle are independent `ScreenshotBrush` instances.
+  Configuration is separate from `Editor`/`Interaction` state.
+- Keep configuration defaults separate from current color, width and zoom. Opening
+  arguments take precedence only for `tool`/`show-pointer`.
+- Read config on opening and handle changes through the existing reload mechanism.
+  Do not clone palettes/strings or compare the whole structure every frame.
+- Reload updates the open UI's theme, geometry and palette. The current RGB selection
+  survives removal from the palette, with no highlighted swatch in that case. Focus
+  on a removed swatch returns to the active colored tool.
+- Brush/arrow/rectangle colors and widths and `magnifier.initial-zoom` are defaults
+  for the next opening. Reload does not reset the current tool, independent colors
+  and widths, history or crop. `remember-selection` affects the next opening.
+- A new `max-zoom` clamps current zoom; lens thresholds and theme apply immediately.
+  Changing `blur.strength` updates strength for new operations; unrelated reloads
+  preserve the selected level.
+- Binding changes rebuild displayed shortcuts. During an active gesture, defer
+  toolbar geometry/hit-test changes until release/cancel; do not change a button's
+  target between press and release.
+
+### Ranges and errors
+
+- Geometry is finite: button, icon, font and lens sizes are strictly positive;
+  margins and border widths are non-negative. The icon must fit inside the button.
+- Opacities are in `[0, 1]`; `drag-opacity <= opacity`.
+- Brush, Arrow and Rectangle widths are `[1, 128]` pixels; Blur levels are `[1, 3]`.
+  `screenshot-context` accepts absolute values 1–128 and clamps to the focused target,
+  otherwise the pointer target (canvas: a power of two within `[1, max-zoom]`);
+  increments clamp without wrapping. Tool and palette colors are opaque.
+- A palette contains `[1, 7]` colors. The upper bound preserves a compact row and the
+  existing seven-key controls without a new layout engine.
+- Zoom levels are the powers of two shown in the example. `initial-zoom <= max-zoom`
+  and `show-from <= max-zoom`. `grid-from` may exceed `max-zoom`: the grid then stays
+  hidden until the maximum is raised. `show-from=1` is not accepted.
+- Selection size is at least `1×1` and stays within the frozen output. Move/resize
+  increments stop at the edge without changing image scale.
+- Invalid config produces the existing diagnostics with error locations. Do not
+  silently replace typos with defaults; retain the previous working config according
+  to the normal reload policy.
+
+## Magnifier: exact conditions
+
+Session zoom is `2^exponent`. An adjustment of `+N` increases the exponent by N and
+clamps it to `[0, log2(max-zoom)]`; `-N` decreases it. On each opening the exponent is
+initialized from `initial-zoom`, not the previous session.
 
 ```text
 lens_visible = current_zoom >= show_from
 grid_visible = lens_visible && grid && current_zoom >= grid_from
 ```
 
-Пример: `initial-zoom=2`, `show-from=4`, `grid-from=8`:
-при открытии лупа скрыта; один шаг вверх показывает её на 4× без сетки;
-следующий показывает сетку на 8×; уменьшение до 2× скрывает лупу.
+Example: `initial-zoom=2`, `show-from=4`, `grid-from=8`. The lens starts hidden; one
+step up shows it at 4× without a grid, the next shows the grid at 8×, and reducing
+to 2× hides the lens.
 
-Равенство включает отображение. Отдельного порога закрытия/гистерезиса нет:
-дискретные ступени не требуют дополнительных состояний. Ширина перекрёстной
-подсветки остаётся равной одному исходному пикселю; центральный пиксель сохраняет
-свой цвет. Nearest sampling и круглая форма остаются фиксированными.
-При скрытой лупе не готовить offscreen-текстуру; колесо продолжает менять масштаб.
+Equality enables visibility. There is no separate closing threshold or hysteresis:
+discrete steps need no additional state. Cross-highlight width remains one source
+pixel; the center pixel retains its color. Nearest sampling and the circular shape
+remain fixed. Do not prepare an offscreen texture while the lens is hidden; wheel
+input continues to adjust zoom.
 
-## Canvas, blur и производительность
+## Canvas, blur and performance
 
-Сохранить порядок композиции:
+Preserve the composition order:
 
-1. Layer 2: панель, палитра, подсказки, рамка выделения, лупа.
-2. Layer 1: штрихи и blur, без затемнения.
-3. Layer 0: immutable frozen frame; затемнение вне crop только при показе UI.
+1. Layer 2: toolbar, palette, tooltips, selection frame, guides, brush outline and magnifier.
+2. Layer 1: strokes, arrows, rectangles and blur, without dimming.
+3. Layer 0: immutable frozen frame; dimming outside the crop applies only in the UI.
 
-Экспорт и содержимое лупы используют одну композицию Layer 0 + Layer 1 без UI.
-Сохранить отдельные source-текстуры для output/screencast/screen-capture и правила
-`block-out-from`: не подменять защищённый вариант обычным изображением.
+Export and lens contents use the same Layer 0 + Layer 1 composition without UI.
+Preserve separate source textures for output/screencast/screen-capture and the
+`block-out-from` rules: do not replace a protected variant with the ordinary image.
 
-Для штриха сохранять `Stroke { points, color, width }` при начале жеста.
-Bounding box, damage, точки и линия используют сохранённую ширину, а не глобальный
-текущий размер. Изменение ширины не добавляет элемент истории и не меняет старые
-штрихи. Undo/Redo воспроизводят исходный payload. Изменение параметров инструмента
-в середине жеста не меняет уже начатый штрих.
+Capture `Stroke { points, color, width }` at gesture start. Bounding box, damage,
+points and line rendering use the captured width, not the current global width.
+Changing width neither adds a history entry nor alters old strokes. Undo/Redo replays
+the original payload. Tool parameter changes mid-gesture do not alter a stroke that
+has already started.
 
-Blur остаётся размитием frozen frame под рисунком, не последовательным размытием
-всей композиции. `BlurStrength` сохраняется в каждой blur-операции. Сопоставление
-пресета с `BlurOptions` выполняется в одном месте:
+Blur operates on the frozen frame beneath drawings, not sequentially on the entire
+composition. Each blur operation stores its `BlurStrength`. Presets map to
+`BlurOptions` in one place:
 
-| Пресет | Начальная настройка passes / offset | Ожидаемый эффект |
-|---|---|---|
-| low | 2 / 2 | Лёгкое сглаживание, текст может оставаться читаемым |
-| medium | 3 / 3 | Текущая сила размытия |
-| high | 4 / 4 | Более крупное смешивание деталей и цветовых пятен |
+| Preset | Implemented passes / offset | Effect |
+| --- | --- | --- |
+| low | 2 / 2 | Light smoothing; text may remain readable |
+| medium | 3 / 3 | Medium strength, the default |
+| high | 4 / 4 | Broader blending of details and color patches |
 
-Low/high — проектные начальные значения, **не проверенный визуально результат**.
-При реализации сравнить все три на одном кадре с мелким/крупным текстом и границами;
-скорректировать численные presets, сохранив пользовательский enum. Не обещать
-безопасную редакцию секретов ни для одного уровня.
+These are the current presets from `blur_options` in `src/ui/screenshot_editor.rs`,
+not a future implementation plan. No level guarantees safe redaction of secrets:
+blur is a visual effect.
 
-GPU blur кэшировать лениво по варианту captured source и strength; максимум три
-пресета на источник, а не новая текстура для каждого прямоугольника. Штрихи обновлять
-по damage, без полного CPU-растра и GPU upload на каждое движение указателя.
+Cache GPU blur lazily by captured-source variant and strength: at most three presets
+per source, not a new texture for every rectangle. Update strokes using damage rather
+than a full CPU raster and GPU upload on every pointer movement.
 
-Ключ кэша панели должен учитывать изменившиеся тему/геометрию/подсказку, но opacity
-остаётся свойством render element: затухание само по себе не перерастрирует SVG.
-Сохранить маски SVG по размеру с корректным A8 stride и дешёвым клонированием
-ImageSurface. Иконки остаются встроенными из `resources/icons/`; загрузка внешних
-SVG и редактирование порядка кнопок не входят в эту реализацию.
+The toolbar cache key must account for theme, geometry and tooltip changes, but
+opacity remains a render-element property: fading alone does not rerasterize SVGs.
+Preserve size-keyed SVG masks with correct A8 stride and cheap ImageSurface cloning.
+Icons remain embedded from `resources/icons/`; loading external SVGs and changing
+button order are outside this implementation.
 
-## Порядок реализации
+## Demo configuration
 
-1. Добавить схему конфигурации и проверки, не меняя внешний вид defaults.
-2. Подключить тему и геометрию, общий расчёт render/hit-test, reload и кэширование.
-3. Сохранить ширину/цвет штриха и strength blur в командах; обновить replay/damage.
-4. Подключить пороги/начальное увеличение и shader uniforms лупы.
-5. Добавить действия в config/IPC/CLI, обновить все вызовы открытия и input routing;
-   перенести defaults в `binds`, убрать старый hardcode после полного cutover.
-6. Обновить пользовательскую wiki и конфиги; выполнить проверки ниже.
+`resources/knit-desktop.kdl` contains a complete set of test bindings and separate
+tool settings. These are not defaults: a red 4 px brush, green 8 px arrow and blue
+6 px rectangle. The arrow palette stays open after selection; repeated activation
+of Rectangle does not open its palette—use C/F1. The magnifier supports 32×.
 
-Это одна завершённая миграция контрактов. Не оставлять параллельные старый и новый
-пути управления, compatibility aliases или частично работающие настройки.
+- Alt+U/Print opens Select; Alt+Shift+U opens Draw without the captured pointer.
+- X toggles axes; Shift_L and MouseRight enable hold.
+- F1/F2 opens/closes the palette, F3/F4 shows/hides the pointer, F5/F6 enables/disables axes.
+- F7/F8/F9 sets brush/arrow/rectangle colors without switching tools.
+- F10 sets context to 8; F11/F12 explicitly sets zoom to 1×/32×; Ctrl+wheel steps zoom.
+- Ctrl+Alt+P/W/A saves PNG/WebP quality 85/AVIF quality 90. Ctrl+Escape discards the session.
+- Desktop zoom in this example uses Ctrl+Alt+Z and Ctrl+Alt+wheel, separate from editor bindings.
 
-## Приёмка и проверка
+The full shortcut table is in the [user wiki](../wiki/Configuration:-Screenshot.md#full-feature-demo-configuration).
+Run `./target/debug/niri --config resources/knit-desktop.kdl` from a Wayland session.
+The config also launches Zed, Obsidian and two Ghostty windows. An isolated smoke run
+checked screenshot settings and bindings without that application startup. It
+verified opening, drawing with the three colored tools, F5/F6, F11/F12 and PNG export
+through Ctrl+Alt+P.
 
-- Конфиг: defaults, частичные блоки, ошибочные enums/цвета/диапазоны, include/reload.
-  Декодирование полного примера после реализации; сейчас проверяется только KDL AST.
-- Бинды: локальные не поглощают ввод вне UI; remap реально работает, включая колесо,
-  другую раскладку, key repeat и отпускание удерживаемой клавиши. Проверить одинаковый
-  trigger обычного и screenshot-действия и ошибку повтора внутри категории.
-- Геометрия: все position/align, разные отступы сторон, узкий output,
-  fractional scale, rotation; hit-test совпадает с показанными кнопками/палитрой.
-- Лупа: границы обоих порогов, независимый initial-zoom, сброс при reopen,
-  шаги +1/+2/-1, ограничения max, смена порогов через reload, nearest и центр пикселя.
-- Canvas: два штриха разной ширины/цвета, Undo/Redo, последующее изменение настроек,
-  пересечение crop, blur разных strengths; старые операции неизменны.
-- UI: полоса кисти снизу, раскрытие/закрытие палитры, сохранение цвета при reload,
-  текущие shortcuts в подсказках, opacity и восстановление после cancel.
-- Экспорт: PNG и clipboard соответствуют canvas, без UI, затемнения и лупы;
-  render failure не закрывает редактор и не экспортирует незаметно исходный кадр.
-- Runtime: запустить настоящий вложенный compositor, выполнить действия мышью,
-  клавиатурой и колесом, проверить показанный кадр и полный GL-лог. Проверить
-  native Wayland на аппаратном renderer и Mesa, не только headless-тесты.
+## Integration
 
-Не добавлять тесты на текст подсказок, копии defaults или факт forwarding.
-Постоянные регрессии должны ловить пользовательское поведение и нарушения границ.
+Configuration, commands, bindings and rendering share one contract, with no old
+hardcoded keys or parallel control path. Schema and validation live in `niri-config`,
+wire types in `niri-ipc`, and session state in `ScreenshotUi`/`Editor`.
+
+## Acceptance and verification
+
+- Config: defaults, partial blocks, invalid enums/colors/ranges, includes and reload.
+- Decode the complete example through `Config::parse_mem`, not only a KDL AST.
+- Bindings: local actions do not consume input outside the UI; remapping works for
+  wheel input, another keyboard layout, key repeat and held-key release. Check the
+  same trigger for ordinary and screenshot actions and duplicate errors within a category.
+- Geometry: all position/alignment combinations, different side margins, narrow
+  outputs, fractional scale and rotation; hit-testing matches visible buttons/palettes.
+- Magnifier: both threshold boundaries, independent initial zoom, reset on reopening,
+  +1/+2/-1 steps, maximum limits, threshold reloads, nearest sampling and center pixel.
+- Canvas: two strokes with different widths/colors, Undo/Redo, later settings changes,
+  crop intersections and different blur strengths; existing operations stay unchanged.
+- UI: bottom brush color stripe, palette opening/closing, color preservation on reload,
+  current shortcuts in tooltips, opacity and restoration after cancel.
+- Context: focus takes precedence over hover; an unselected tool adjusts its own
+  parameter without being selected; UI blocks zoom; pointer movement restores pointer routing.
+- Axes: toggle and hold=true, restoring toggle after release, multiple owners,
+  unrelated release, no repeat and reanchoring without completing the shape.
+- Export: PNG and clipboard match the canvas without UI, dimming or magnifier;
+  rendering failure neither closes the editor nor silently exports the unedited frame.
+- Runtime: launch a real nested compositor, exercise mouse, keyboard and wheel input,
+  inspect the displayed frame and full GL log. Check native Wayland with a hardware
+  renderer and Mesa, not only headless tests.
+
+Do not add tests for tooltip wording, copied defaults or mere forwarding.
+Permanent regressions must catch user-visible behavior and boundary violations.

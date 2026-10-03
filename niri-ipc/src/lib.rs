@@ -336,7 +336,7 @@ pub enum Action {
     },
     /// Open the screenshot UI.
     Screenshot {
-        ///  Whether to show the mouse pointer by default in the screenshot UI.
+        /// Whether to show the mouse pointer by default in the screenshot UI.
         #[cfg_attr(feature = "clap", arg(short = 'p', long, action = clap::ArgAction::Set, default_value_t = true))]
         show_pointer: bool,
 
@@ -347,6 +347,11 @@ pub enum Action {
         /// If `None`, the screenshot is saved according to the `screenshot-path` config setting.
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set))]
         path: Option<String>,
+
+        /// Tool to select when opening the screenshot UI.
+        #[cfg_attr(feature = "clap", arg(long, value_enum, default_value = "select"))]
+        #[serde(default)]
+        tool: ScreenshotTool,
     },
     /// Screenshot the focused screen.
     ScreenshotScreen {
@@ -397,6 +402,76 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set))]
         path: Option<String>,
     },
+    /// Select the active tool in the screenshot editor without opening the palette.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ScreenshotTool {
+        /// Tool to select.
+        #[cfg_attr(feature = "clap", arg(value_enum))]
+        tool: ScreenshotTool,
+    },
+    /// Toggle the color palette of the brush tool.
+    ///
+    /// Has no effect if the screenshot UI is not open, or if the brush tool is not active.
+    ScreenshotTogglePalette {},
+    /// Open or close the color palette of the brush tool.
+    ///
+    /// Opening the palette while another tool is active is a no-op; the tool is not switched
+    /// implicitly. Has no effect if the screenshot UI is not open.
+    ScreenshotSetPalette {
+        /// Whether the palette should be open.
+        #[cfg_attr(feature = "clap", arg(action = clap::ArgAction::Set))]
+        open: bool,
+    },
+    /// Pick a color from the palette by its 1-based index.
+    ///
+    /// Has no effect if the screenshot UI is not open or the palette is closed. An index that is
+    /// within the allowed range but has no corresponding palette color is also a no-op.
+    ScreenshotPaletteColor {
+        /// 1-based index of the palette color, from 1 to 7.
+        #[cfg_attr(feature = "clap", arg())]
+        index: u8,
+    },
+    /// Set the brush color directly, independently of the palette and the active tool.
+    ///
+    /// Does not switch the tool or toggle the palette. Has no effect if the screenshot UI is
+    /// not open.
+    ScreenshotBrushColor {
+        /// Color in `#RRGGBB` form.
+        #[cfg_attr(feature = "clap", arg())]
+        color: ScreenshotColor,
+    },
+    /// Set or adjust the keyboard-focused tool, falling back to pointer context:
+    /// Draw, Arrow or Rectangle stroke width, Blur strength, or magnifier zoom
+    /// over the canvas. Mouse movement clears keyboard focus. Tools are not selected.
+    ///
+    /// A bare number sets an absolute value from 1 to 128; a signed string such as `"+1"`
+    /// or `"-1"` adjusts the current value. Each target clamps to its own range at runtime:
+    /// blur strength to 1–3, magnifier zoom floored to a power of two within the configured
+    /// `max-zoom`. Select and other overlay controls ignore the action. With neither
+    /// keyboard focus nor a pointer, this is a no-op. Each tool remembers its own value
+    /// independently. Has no effect if the screenshot UI is not open.
+    ScreenshotContext {
+        /// Absolute value, or a signed adjustment like `"+1"` or `"-1"`.
+        #[cfg_attr(feature = "clap", arg(allow_hyphen_values = true))]
+        change: ScreenshotValueChange,
+    },
+    /// Set the arrow color directly, independently of the palette.
+    ///
+    /// Does not switch the tool. Has no effect if the screenshot UI is not open.
+    ScreenshotArrowColor {
+        /// Color in `#RRGGBB` form.
+        #[cfg_attr(feature = "clap", arg())]
+        color: ScreenshotColor,
+    },
+    /// Set the rectangle outline color directly, independently of the palette.
+    ///
+    /// Does not switch the tool. Has no effect if the screenshot UI is not open.
+    ScreenshotRectangleColor {
+        /// Color in `#RRGGBB` form.
+        #[cfg_attr(feature = "clap", arg())]
+        color: ScreenshotColor,
+    },
     /// Undo the last edit in the screenshot editor.
     ///
     /// Has no effect if the screenshot UI is not open.
@@ -405,6 +480,124 @@ pub enum Action {
     ///
     /// Has no effect if the screenshot UI is not open.
     ScreenshotRedo {},
+    /// Toggle whether the captured mouse pointer is shown in the screenshot image.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ScreenshotTogglePointer {},
+    /// Set whether the captured mouse pointer is shown in the screenshot image.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ScreenshotSetPointer {
+        /// Whether the captured pointer should be visible.
+        #[cfg_attr(feature = "clap", arg(action = clap::ArgAction::Set))]
+        show_pointer: bool,
+    },
+    /// Toggle the axis guides in the screenshot editor.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ScreenshotToggleAxes {},
+    /// Set whether the axis guides are shown in the screenshot editor.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ScreenshotSetAxes {
+        /// Whether the axis guides should be enabled.
+        #[cfg_attr(feature = "clap", arg(action = clap::ArgAction::Set))]
+        enabled: bool,
+    },
+    /// Move the selection in captured-frame pixels.
+    ///
+    /// The selection keeps its size and is clamped to the frame. Has no effect if the
+    /// screenshot UI is not open.
+    ScreenshotMoveSelection {
+        /// Horizontal offset in captured-frame pixels.
+        #[cfg_attr(
+            feature = "clap",
+            arg(long, default_value_t = 0, allow_hyphen_values = true)
+        )]
+        x: i32,
+        /// Vertical offset in captured-frame pixels.
+        #[cfg_attr(
+            feature = "clap",
+            arg(long, default_value_t = 0, allow_hyphen_values = true)
+        )]
+        y: i32,
+    },
+    /// Grow or shrink the selection in captured-frame pixels.
+    ///
+    /// The top-left corner stays in place; the size is clamped to a minimum of 1x1 and to the
+    /// frame bounds. Has no effect if the screenshot UI is not open.
+    ScreenshotResizeSelection {
+        /// Width change in captured-frame pixels.
+        #[cfg_attr(
+            feature = "clap",
+            arg(long, default_value_t = 0, allow_hyphen_values = true)
+        )]
+        width: i32,
+        /// Height change in captured-frame pixels.
+        #[cfg_attr(
+            feature = "clap",
+            arg(long, default_value_t = 0, allow_hyphen_values = true)
+        )]
+        height: i32,
+    },
+    /// Set or adjust the magnifier zoom in the screenshot editor.
+    ///
+    /// A bare number sets an absolute zoom level; allowed absolute values are 1, 2, 4, 8, 16
+    /// and 32. A signed string such as `"+1"` or `"-1"` moves that many steps along the zoom
+    /// ladder, clamped by the configured `max-zoom`. Has no effect if the screenshot UI is not
+    /// open.
+    ScreenshotMagnifierZoom {
+        /// Absolute zoom level, or a signed step adjustment like `"+1"` or `"-1"`.
+        #[cfg_attr(feature = "clap", arg(allow_hyphen_values = true))]
+        zoom: ScreenshotValueChange,
+    },
+    /// Move keyboard focus to the next available screenshot UI control.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ScreenshotFocusNext {},
+    /// Move keyboard focus to the previous available screenshot UI control.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ScreenshotFocusPrevious {},
+    /// Activate the focused screenshot UI control, or save and copy when nothing is focused.
+    ///
+    /// Equivalent to pressing Enter in the screenshot UI. Has no effect if the screenshot UI is
+    /// not open.
+    ScreenshotConfirm {},
+    /// One step of the screenshot UI's Escape handling.
+    ///
+    /// Closes the palette, then cancels the in-progress gesture restoring the selection, then
+    /// closes the UI. Has no effect if the screenshot UI is not open.
+    ScreenshotCancel {},
+    /// Export the screenshot editor's selection, copy it to the clipboard, and close the UI.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    ConfirmScreenshot {
+        /// Write the screenshot to disk in addition to putting it in your clipboard.
+        ///
+        /// The screenshot is saved to the path from the session that opened the editor.
+        #[cfg_attr(feature = "clap", arg(short = 'd', long, action = clap::ArgAction::Set, default_value_t = true))]
+        write_to_disk: bool,
+
+        /// Image format for the screenshot written to disk.
+        ///
+        /// The clipboard image is always PNG.
+        ///
+        /// If `None`, the screenshot is saved according to the `screenshot-format` config
+        /// setting.
+        #[cfg_attr(feature = "clap", arg(long, value_enum))]
+        #[serde(default)]
+        format: Option<ScreenshotFormat>,
+        /// Quality for this export: WebP 0–100 (lossy), AVIF 1–100.
+        /// Omitted: WebP lossless, AVIF 90. Ignored for PNG and clipboard-only.
+        #[cfg_attr(feature = "clap", arg(long, allow_hyphen_values = true))]
+        #[serde(default)]
+        quality: Option<f32>,
+    },
+    /// Close the screenshot editor unconditionally, discarding any edits.
+    ///
+    /// Has no effect if the screenshot UI is not open.
+    CancelScreenshot {},
     /// Enable or disable the keyboard shortcuts inhibitor (if any) for the focused surface.
     ToggleKeyboardShortcutsInhibit {},
     /// Close a window.
@@ -1110,6 +1303,395 @@ pub enum Action {
         #[serde(default)]
         lock: bool,
     },
+}
+impl Action {
+    /// Validates action arguments that do not depend on compositor state.
+    ///
+    /// The IPC server runs this check before dispatching the action to the event loop, so raw
+    /// JSON requests and CLI arguments are validated identically. Config-file actions go through
+    /// the same argument types and are checked when the config is parsed.
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::ConfirmScreenshot {
+                quality: Some(quality),
+                format,
+                write_to_disk,
+            } => {
+                if !(0.0..=100.0).contains(quality) {
+                    return Err("quality must be between 0 and 100".into());
+                }
+                if *write_to_disk && *format == Some(ScreenshotFormat::Avif) && *quality < 1.0 {
+                    return Err("AVIF quality must be between 1 and 100".into());
+                }
+            }
+            Self::ScreenshotContext {
+                change: ScreenshotValueChange::Set(change),
+            } => {
+                // The pointer context is not known here, so absolute values accept the full
+                // stroke-width range; each target clamps to its own range at runtime.
+                if !(MIN_SCREENSHOT_BRUSH_WIDTH..=MAX_SCREENSHOT_BRUSH_WIDTH).contains(change) {
+                    return Err(format!(
+                        "screenshot context value must be between {MIN_SCREENSHOT_BRUSH_WIDTH} \
+                         and {MAX_SCREENSHOT_BRUSH_WIDTH}, got {change}"
+                    ));
+                }
+            }
+            Self::ScreenshotMagnifierZoom {
+                zoom: ScreenshotValueChange::Set(zoom),
+            } => {
+                if !matches!(*zoom, 1 | 2 | 4 | 8 | 16 | 32) {
+                    return Err(format!(
+                        "magnifier zoom must be one of 1, 2, 4, 8, 16, 32, got {zoom}"
+                    ));
+                }
+            }
+            Self::ScreenshotPaletteColor { index } if !(1..=7).contains(index) => {
+                return Err(format!(
+                    "palette color index must be between 1 and 7, got {index}"
+                ));
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+}
+
+/// The editing tool in the screenshot editor.
+///
+/// `select`/`draw`/`blur`/`arrow`/`rectangle`) and the config file.
+#[derive(Serialize, Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum ScreenshotTool {
+    /// Region selection tool.
+    #[default]
+    Select,
+    /// Freehand brush tool.
+    Draw,
+    /// Blur tool.
+    Blur,
+    /// Straight arrow tool.
+    Arrow,
+    /// Rectangle outline tool.
+    Rectangle,
+}
+
+impl std::fmt::Display for ScreenshotTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Select => "select",
+            Self::Draw => "draw",
+            Self::Blur => "blur",
+            Self::Arrow => "arrow",
+            Self::Rectangle => "rectangle",
+        };
+        f.write_str(s)
+    }
+}
+
+impl FromStr for ScreenshotTool {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "select" => Ok(Self::Select),
+            "draw" => Ok(Self::Draw),
+            "blur" => Ok(Self::Blur),
+            "arrow" => Ok(Self::Arrow),
+            "rectangle" => Ok(Self::Rectangle),
+            _ => Err(
+                "invalid tool: can be \"select\", \"draw\", \"blur\", \"arrow\" or \"rectangle\"",
+            ),
+        }
+    }
+}
+
+/// Image format for screenshots written to disk.
+///
+/// Shared between the `screenshot-format` config setting, the `confirm-screenshot` action and
+/// CLI parsing (lowercase `png`/`webp`/`avif`). The clipboard image is always PNG.
+#[derive(Serialize, Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum ScreenshotFormat {
+    /// PNG image format.
+    #[default]
+    Png,
+    /// WebP image format.
+    Webp,
+    /// AVIF image format.
+    Avif,
+}
+
+impl ScreenshotFormat {
+    /// File extension for this format, without a leading dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Webp => "webp",
+            Self::Avif => "avif",
+        }
+    }
+}
+
+impl std::fmt::Display for ScreenshotFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.extension())
+    }
+}
+
+impl FromStr for ScreenshotFormat {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "png" => Ok(Self::Png),
+            "webp" => Ok(Self::Webp),
+            "avif" => Ok(Self::Avif),
+            _ => Err("invalid format: can be \"png\", \"webp\" or \"avif\""),
+        }
+    }
+}
+
+/// Minimum stroke width in the screenshot editor, in captured-frame pixels.
+///
+/// Also the lower bound of the absolute `ScreenshotContext` value accepted at validation
+/// time; each pointer-context target clamps to its own range at runtime.
+pub const MIN_SCREENSHOT_BRUSH_WIDTH: u32 = 1;
+
+/// Maximum stroke width in the screenshot editor, in captured-frame pixels.
+///
+/// Also the upper bound of the absolute `ScreenshotContext` value accepted at validation
+/// time; each pointer-context target clamps to its own range at runtime.
+pub const MAX_SCREENSHOT_BRUSH_WIDTH: u32 = 128;
+
+/// An absolute value or a signed adjustment for a screenshot editor setting.
+///
+/// On the wire and in the config, an absolute value is a plain number (`6`) and an adjustment
+/// is a signed string (`"+1"`, `"-1"`). The CLI accepts a bare positive number as an absolute
+/// value and a signed number as an adjustment through [`FromStr`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenshotValueChange {
+    /// Set an absolute value.
+    Set(u32),
+    /// Adjust the current value by a signed amount.
+    Adjust(i32),
+}
+
+impl Serialize for ScreenshotValueChange {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Set(value) => serializer.serialize_u32(*value),
+            Self::Adjust(delta) => serializer.serialize_str(&format!("{delta:+}")),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ScreenshotValueChange {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ScreenshotValueChange;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a non-negative integer, or a signed integer string")
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                u32::try_from(value)
+                    .map(ScreenshotValueChange::Set)
+                    .map_err(|_| E::custom(format!("value out of range: {value}")))
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                u32::try_from(value)
+                    .map(ScreenshotValueChange::Set)
+                    .map_err(|_| {
+                        E::custom(format!("absolute value must be non-negative, got {value}"))
+                    })
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                value.parse().map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+#[cfg(feature = "json-schema")]
+impl schemars::JsonSchema for ScreenshotValueChange {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ScreenshotValueChange".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "anyOf": [
+                {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": u32::MAX,
+                    "description": "Absolute value to set.",
+                },
+                {
+                    "type": "string",
+                    "pattern": "^[+-][0-9]+$",
+                    "description": "Signed adjustment, like \"+1\" or \"-1\".",
+                },
+            ],
+        })
+    }
+}
+
+impl std::fmt::Display for ScreenshotValueChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Set(value) => write!(f, "{value}"),
+            Self::Adjust(delta) => write!(f, "{delta:+}"),
+        }
+    }
+}
+
+impl FromStr for ScreenshotValueChange {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.as_bytes().first() {
+            Some(b'+' | b'-') => {
+                let digits = &s[1..];
+                if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                    return Err("invalid value: expected a signed integer adjustment");
+                }
+                // The digits carry no sign, so a magnitude equal to 2^31 (the i32::MIN
+                // magnitude) fits in i64; the final check rejects anything larger.
+                let magnitude = digits
+                    .parse::<i64>()
+                    .map_err(|_| "invalid value: adjustment out of range")?;
+                let delta = if s.as_bytes()[0] == b'-' {
+                    -magnitude
+                } else {
+                    magnitude
+                };
+                i32::try_from(delta)
+                    .map(Self::Adjust)
+                    .map_err(|_| "invalid value: adjustment out of range")
+            }
+            _ => s
+                .parse::<u32>()
+                .map(Self::Set)
+                .map_err(|_| "invalid value: expected a non-negative integer"),
+        }
+    }
+}
+
+/// An opaque RGB color in the screenshot editor.
+///
+/// Parsed and serialized as a `#RRGGBB` string; there is no alpha channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ScreenshotColor {
+    /// Red component.
+    pub r: u8,
+    /// Green component.
+    pub g: u8,
+    /// Blue component.
+    pub b: u8,
+}
+
+impl ScreenshotColor {
+    /// Creates a color from its RGB components.
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+
+    /// The color's components, normalized to `[0.0, 1.0]` for Cairo.
+    pub fn rgb(self) -> (f64, f64, f64) {
+        (
+            f64::from(self.r) / 255.,
+            f64::from(self.g) / 255.,
+            f64::from(self.b) / 255.,
+        )
+    }
+}
+
+impl Default for ScreenshotColor {
+    /// The default brush color of the screenshot editor: red.
+    fn default() -> Self {
+        Self::new(0xff, 0, 0)
+    }
+}
+
+impl FromStr for ScreenshotColor {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        const ERR: &str = "invalid color: expected an #RRGGBB string";
+
+        let hex = s.strip_prefix('#').ok_or(ERR)?;
+        if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(ERR);
+        }
+        // Length and hex checks above make this parse infallible.
+        let value = u32::from_str_radix(hex, 16).map_err(|_| ERR)?;
+        Ok(Self {
+            r: (value >> 16) as u8,
+            g: (value >> 8) as u8,
+            b: value as u8,
+        })
+    }
+}
+
+impl Serialize for ScreenshotColor {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b))
+    }
+}
+
+impl<'de> Deserialize<'de> for ScreenshotColor {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ScreenshotColor;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an #RRGGBB color string")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                value.parse().map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(Visitor)
+    }
+}
+
+#[cfg(feature = "json-schema")]
+impl schemars::JsonSchema for ScreenshotColor {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ScreenshotColor".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "description": "An opaque RGB color in #RRGGBB form.",
+        })
+    }
 }
 
 /// Change in window or column size.
@@ -2504,5 +3086,634 @@ mod tests {
             .validate(),
             Ok(())
         );
+    }
+    fn action_from_json(json: &str) -> Result<Action, serde_json::Error> {
+        let request: Request = serde_json::from_str(json)?;
+        let Request::Action(action) = request else {
+            panic!("expected an Action request, got {request:?}");
+        };
+        Ok(action)
+    }
+
+    #[test]
+    fn screenshot_open_old_json_defaults_to_select() {
+        // Requests written against the old schema, without a `tool`, must keep working.
+        let action =
+            action_from_json(r#"{"Action":{"Screenshot":{"show_pointer":false,"path":null}}}"#)
+                .unwrap();
+        let Action::Screenshot {
+            show_pointer,
+            path,
+            tool,
+        } = action
+        else {
+            panic!("expected Screenshot, got {action:?}");
+        };
+        assert!(!show_pointer);
+        assert_eq!(path, None);
+        assert_eq!(tool, ScreenshotTool::Select);
+
+        let action = action_from_json(
+            r#"{"Action":{"Screenshot":{"tool":"draw","show_pointer":false,"path":"/tmp/a.png"}}}"#,
+        )
+        .unwrap();
+        let Action::Screenshot {
+            show_pointer,
+            path,
+            tool,
+        } = action
+        else {
+            panic!("expected Screenshot, got {action:?}");
+        };
+        assert!(!show_pointer);
+        assert_eq!(path.as_deref(), Some("/tmp/a.png"));
+        assert_eq!(tool, ScreenshotTool::Draw);
+    }
+
+    #[test]
+    fn screenshot_editor_actions_parse_from_json() {
+        let cases: &[(&str, Action)] = &[
+            (
+                r#"{"Action":{"ScreenshotTool":{"tool":"blur"}}}"#,
+                Action::ScreenshotTool {
+                    tool: ScreenshotTool::Blur,
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotSetPalette":{"open":false}}}"#,
+                Action::ScreenshotSetPalette { open: false },
+            ),
+            (
+                r#"{"Action":{"ScreenshotPaletteColor":{"index":3}}}"#,
+                Action::ScreenshotPaletteColor { index: 3 },
+            ),
+            (
+                r##"{"Action":{"ScreenshotBrushColor":{"color":"#0080ff"}}}"##,
+                Action::ScreenshotBrushColor {
+                    color: ScreenshotColor::new(0x00, 0x80, 0xff),
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotContext":{"change":6}}}"#,
+                Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Set(6),
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotContext":{"change":"+1"}}}"#,
+                Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Adjust(1),
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotContext":{"change":"-1"}}}"#,
+                Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Adjust(-1),
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotSetPointer":{"show_pointer":false}}}"#,
+                Action::ScreenshotSetPointer {
+                    show_pointer: false,
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotMoveSelection":{"x":-20,"y":0}}}"#,
+                Action::ScreenshotMoveSelection { x: -20, y: 0 },
+            ),
+            (
+                r#"{"Action":{"ScreenshotResizeSelection":{"width":20,"height":-4}}}"#,
+                Action::ScreenshotResizeSelection {
+                    width: 20,
+                    height: -4,
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotMagnifierZoom":{"zoom":4}}}"#,
+                Action::ScreenshotMagnifierZoom {
+                    zoom: ScreenshotValueChange::Set(4),
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotMagnifierZoom":{"zoom":"-2"}}}"#,
+                Action::ScreenshotMagnifierZoom {
+                    zoom: ScreenshotValueChange::Adjust(-2),
+                },
+            ),
+            (
+                r#"{"Action":{"ConfirmScreenshot":{"write_to_disk":true}}}"#,
+                Action::ConfirmScreenshot {
+                    write_to_disk: true,
+                    format: None,
+                    quality: None,
+                },
+            ),
+            (
+                r#"{"Action":{"ConfirmScreenshot":{"write_to_disk":false,"format":"webp"}}}"#,
+                Action::ConfirmScreenshot {
+                    write_to_disk: false,
+                    format: Some(ScreenshotFormat::Webp),
+                    quality: None,
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotConfirm":{}}}"#,
+                Action::ScreenshotConfirm {},
+            ),
+            (
+                r#"{"Action":{"ScreenshotCancel":{}}}"#,
+                Action::ScreenshotCancel {},
+            ),
+            (
+                r#"{"Action":{"CancelScreenshot":{}}}"#,
+                Action::CancelScreenshot {},
+            ),
+            (
+                r#"{"Action":{"ScreenshotTogglePalette":{}}}"#,
+                Action::ScreenshotTogglePalette {},
+            ),
+            (
+                r#"{"Action":{"ScreenshotFocusNext":{}}}"#,
+                Action::ScreenshotFocusNext {},
+            ),
+            (
+                r#"{"Action":{"ScreenshotFocusPrevious":{}}}"#,
+                Action::ScreenshotFocusPrevious {},
+            ),
+            (
+                r#"{"Action":{"ScreenshotTogglePointer":{}}}"#,
+                Action::ScreenshotTogglePointer {},
+            ),
+            (
+                r#"{"Action":{"ScreenshotTool":{"tool":"arrow"}}}"#,
+                Action::ScreenshotTool {
+                    tool: ScreenshotTool::Arrow,
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotTool":{"tool":"rectangle"}}}"#,
+                Action::ScreenshotTool {
+                    tool: ScreenshotTool::Rectangle,
+                },
+            ),
+            (
+                r##"{"Action":{"ScreenshotArrowColor":{"color":"#0080ff"}}}"##,
+                Action::ScreenshotArrowColor {
+                    color: ScreenshotColor::new(0x00, 0x80, 0xff),
+                },
+            ),
+            (
+                r##"{"Action":{"ScreenshotRectangleColor":{"color":"#0080ff"}}}"##,
+                Action::ScreenshotRectangleColor {
+                    color: ScreenshotColor::new(0x00, 0x80, 0xff),
+                },
+            ),
+            (
+                r#"{"Action":{"ScreenshotToggleAxes":{}}}"#,
+                Action::ScreenshotToggleAxes {},
+            ),
+            (
+                r#"{"Action":{"ScreenshotSetAxes":{"enabled":false}}}"#,
+                Action::ScreenshotSetAxes { enabled: false },
+            ),
+        ];
+
+        for (json, expected) in cases {
+            let action = action_from_json(json).unwrap_or_else(|e| panic!("{json}: {e}"));
+            // Action does not implement PartialEq; compare the serialized forms.
+            assert_eq!(
+                serde_json::to_value(&action).unwrap(),
+                serde_json::to_value(expected).unwrap(),
+                "{json}: got {action:?}"
+            );
+            let json_round_trip = serde_json::to_string(&Request::Action(action)).unwrap();
+            assert!(
+                action_from_json(&json_round_trip).is_ok(),
+                "{json}: round trip failed for {json_round_trip}"
+            );
+        }
+    }
+
+    #[test]
+    fn screenshot_actions_reject_bad_arguments() {
+        for json in [
+            // Invalid tool enum value.
+            r#"{"Action":{"ScreenshotTool":{"tool":"crop"}}}"#,
+            r#"{"Action":{"Screenshot":{"tool":"crop","show_pointer":true}}}"#,
+            // Malformed color strings.
+            r#"{"Action":{"ScreenshotBrushColor":{"color":"0080ff"}}}"#,
+            r##"{"Action":{"ScreenshotBrushColor":{"color":"#80ff"}}}"##,
+            r##"{"Action":{"ScreenshotBrushColor":{"color":"#0080ffcc"}}}"##,
+            r#"{"Action":{"ScreenshotBrushColor":{"color":"red"}}}"#,
+            // Malformed value changes.
+            r#"{"Action":{"ScreenshotContext":{"change":"abc"}}}"#,
+            r#"{"Action":{"ScreenshotContext":{"change":-1}}}"#,
+            r#"{"Action":{"ScreenshotContext":{"change":1.5}}}"#,
+            r#"{"Action":{"ScreenshotContext":{"change":4294967296}}}"#,
+            r#"{"Action":{"ScreenshotContext":{"change":"high"}}}"#,
+            r#"{"Action":{"ScreenshotMagnifierZoom":{"zoom":"+"}}}"#,
+            r#"{"Action":{"ScreenshotMagnifierZoom":{"zoom":"-abc"}}}"#,
+            // Wrong types.
+            r#"{"Action":{"ScreenshotPaletteColor":{"index":"3"}}}"#,
+            r#"{"Action":{"ScreenshotMoveSelection":{"x":"-20","y":0}}}"#,
+            r#"{"Action":{"ScreenshotSetAxes":{"enabled":"true"}}}"#,
+            // The old per-tool width and blur-strength actions no longer exist, and neither
+            // does the intermediate factor name.
+            r#"{"Action":{"ScreenshotBrushWidth":{"width":6}}}"#,
+            r#"{"Action":{"ScreenshotArrowWidth":{"width":8}}}"#,
+            r#"{"Action":{"ScreenshotRectangleWidth":{"width":"-1"}}}"#,
+            r#"{"Action":{"ScreenshotBlurStrength":{"strength":2}}}"#,
+            r#"{"Action":{"ScreenshotFactor":{"factor":"+1"}}}"#,
+            r##"{"Action":{"ScreenshotRectangleColor":{"color":"#80ff"}}}"##,
+            // Invalid format enum value.
+            r#"{"Action":{"ConfirmScreenshot":{"write_to_disk":true,"format":"jpeg"}}}"#,
+        ] {
+            let json: &str = json;
+            assert!(
+                action_from_json(json).is_err(),
+                "expected a parse error for {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn screenshot_format_parsing() {
+        for (name, format) in [
+            ("png", ScreenshotFormat::Png),
+            ("webp", ScreenshotFormat::Webp),
+            ("avif", ScreenshotFormat::Avif),
+        ] {
+            assert_eq!(name.parse::<ScreenshotFormat>().unwrap(), format);
+            assert_eq!(format.to_string(), name);
+            assert_eq!(serde_json::to_value(format).unwrap(), name);
+        }
+
+        for bad in ["jpeg", "", "PNG", "png "] {
+            assert!(bad.parse::<ScreenshotFormat>().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn screenshot_quality_validation() {
+        for quality in [-1., 100.1, f32::NAN, f32::INFINITY] {
+            assert!(Action::ConfirmScreenshot {
+                write_to_disk: true,
+                format: None,
+                quality: Some(quality)
+            }
+            .validate()
+            .is_err());
+        }
+        for quality in [0., 37.5, 100.] {
+            let json = format!(
+                r#"{{"Action":{{"ConfirmScreenshot":{{"write_to_disk":true,"format":"webp","quality":{quality}}}}}}}"#
+            );
+            let action = action_from_json(&json).unwrap();
+            assert!(action.validate().is_ok());
+            assert!(
+                matches!(action, Action::ConfirmScreenshot { quality: Some(q), .. } if q == quality)
+            );
+        }
+        assert!(Action::ConfirmScreenshot {
+            write_to_disk: true,
+            format: Some(ScreenshotFormat::Avif),
+            quality: Some(0.)
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn screenshot_actions_validate() {
+        // An absolute value is limited to 1-128 for every pointer context; adjustments are
+        // always accepted and clamped at runtime.
+        for change in [0, 129, u32::MAX] {
+            let action = Action::ScreenshotContext {
+                change: ScreenshotValueChange::Set(change),
+            };
+            assert!(
+                action.validate().is_err(),
+                "value {change} must be rejected"
+            );
+        }
+        for change in [MIN_SCREENSHOT_BRUSH_WIDTH, MAX_SCREENSHOT_BRUSH_WIDTH, 6] {
+            let action = Action::ScreenshotContext {
+                change: ScreenshotValueChange::Set(change),
+            };
+            assert_eq!(action.validate(), Ok(()));
+        }
+        for delta in [i32::MIN, -1, 0, 1, i32::MAX] {
+            let action = Action::ScreenshotContext {
+                change: ScreenshotValueChange::Adjust(delta),
+            };
+            assert_eq!(action.validate(), Ok(()));
+        }
+
+        // Absolute magnifier zoom is a fixed ladder; adjustments are clamped at runtime.
+        for zoom in [0, 3, 5, 64, u32::MAX] {
+            let action = Action::ScreenshotMagnifierZoom {
+                zoom: ScreenshotValueChange::Set(zoom),
+            };
+            assert!(action.validate().is_err(), "zoom {zoom} must be rejected");
+        }
+        for zoom in [1, 2, 4, 8, 16, 32] {
+            let action = Action::ScreenshotMagnifierZoom {
+                zoom: ScreenshotValueChange::Set(zoom),
+            };
+            assert_eq!(action.validate(), Ok(()));
+        }
+
+        assert_eq!(Action::ScreenshotToggleAxes {}.validate(), Ok(()));
+        assert_eq!(
+            Action::ScreenshotSetAxes { enabled: true }.validate(),
+            Ok(())
+        );
+
+        // Palette indices are 1-based and bounded by the maximum palette size.
+        for index in [0, 8, u8::MAX] {
+            let action = Action::ScreenshotPaletteColor { index };
+            assert!(action.validate().is_err(), "index {index} must be rejected");
+        }
+        for index in 1..=7 {
+            let action = Action::ScreenshotPaletteColor { index };
+            assert_eq!(action.validate(), Ok(()));
+        }
+
+        // Unrelated actions validate fine.
+        assert_eq!(
+            Action::ScreenshotMoveSelection {
+                x: i32::MIN,
+                y: i32::MAX
+            }
+            .validate(),
+            Ok(())
+        );
+        assert_eq!(Action::CancelScreenshot {}.validate(), Ok(()));
+    }
+
+    #[test]
+    fn screenshot_value_change_from_str() {
+        assert_eq!("6".parse(), Ok(ScreenshotValueChange::Set(6)));
+        assert_eq!("+1".parse(), Ok(ScreenshotValueChange::Adjust(1)));
+        assert_eq!("-1".parse(), Ok(ScreenshotValueChange::Adjust(-1)));
+        assert_eq!(
+            "-2147483648".parse(),
+            Ok(ScreenshotValueChange::Adjust(i32::MIN))
+        );
+
+        assert!("".parse::<ScreenshotValueChange>().is_err());
+        assert!("+".parse::<ScreenshotValueChange>().is_err());
+        assert!("-".parse::<ScreenshotValueChange>().is_err());
+        assert!("abc".parse::<ScreenshotValueChange>().is_err());
+        assert!("-1.5".parse::<ScreenshotValueChange>().is_err());
+        assert!("4294967296".parse::<ScreenshotValueChange>().is_err());
+        assert!("+2147483648".parse::<ScreenshotValueChange>().is_err());
+        assert!("-2147483649".parse::<ScreenshotValueChange>().is_err());
+    }
+
+    #[test]
+    fn screenshot_color_parsing() {
+        assert_eq!(
+            "#0080ff".parse(),
+            Ok(ScreenshotColor::new(0x00, 0x80, 0xff))
+        );
+        assert_eq!(
+            "#A6D9F2".parse(),
+            Ok(ScreenshotColor::new(0xa6, 0xd9, 0xf2))
+        );
+
+        for bad in [
+            "",
+            "#",
+            "0080ff",
+            "#80ff",
+            "#0080ffcc",
+            "red",
+            "#gggggg",
+            " #0080ff",
+        ] {
+            assert!(
+                bad.parse::<ScreenshotColor>().is_err(),
+                "expected an error for {bad:?}"
+            );
+        }
+
+        let color = ScreenshotColor::new(0x80, 0xc7, 0xff);
+        assert_eq!(serde_json::to_string(&color).unwrap(), "\"#80c7ff\"");
+        let parsed: ScreenshotColor = serde_json::from_str("\"#80c7ff\"").unwrap();
+        assert_eq!(parsed, color);
+        assert_eq!(color.rgb(), (128. / 255., 199. / 255., 1.));
+        assert_eq!(ScreenshotColor::default(), ScreenshotColor::new(0xff, 0, 0));
+    }
+
+    #[cfg(feature = "clap")]
+    #[test]
+    fn screenshot_actions_parse_from_cli() {
+        use clap::Parser;
+
+        let cases: &[(&[&str], Action)] = &[
+            (
+                &["screenshot", "--tool", "draw", "--show-pointer", "false"],
+                Action::Screenshot {
+                    show_pointer: false,
+                    path: None,
+                    tool: ScreenshotTool::Draw,
+                },
+            ),
+            (
+                &["screenshot"],
+                Action::Screenshot {
+                    show_pointer: true,
+                    path: None,
+                    tool: ScreenshotTool::Select,
+                },
+            ),
+            (
+                &["screenshot-tool", "blur"],
+                Action::ScreenshotTool {
+                    tool: ScreenshotTool::Blur,
+                },
+            ),
+            (
+                &["screenshot-set-palette", "true"],
+                Action::ScreenshotSetPalette { open: true },
+            ),
+            (
+                &["screenshot-palette-color", "3"],
+                Action::ScreenshotPaletteColor { index: 3 },
+            ),
+            (
+                &["screenshot-brush-color", "#0080ff"],
+                Action::ScreenshotBrushColor {
+                    color: ScreenshotColor::new(0x00, 0x80, 0xff),
+                },
+            ),
+            (
+                &["screenshot-context", "6"],
+                Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Set(6),
+                },
+            ),
+            (
+                &["screenshot-context", "+1"],
+                Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Adjust(1),
+                },
+            ),
+            // Leading hyphen values must not be parsed as options.
+            (
+                &["screenshot-context", "-1"],
+                Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Adjust(-1),
+                },
+            ),
+            (
+                &["screenshot-set-pointer", "false"],
+                Action::ScreenshotSetPointer {
+                    show_pointer: false,
+                },
+            ),
+            (
+                &["screenshot-move-selection", "--x", "-20", "--y", "0"],
+                Action::ScreenshotMoveSelection { x: -20, y: 0 },
+            ),
+            (
+                &["screenshot-move-selection", "--x", "-20"],
+                Action::ScreenshotMoveSelection { x: -20, y: 0 },
+            ),
+            (
+                &[
+                    "screenshot-resize-selection",
+                    "--width",
+                    "-5",
+                    "--height",
+                    "2",
+                ],
+                Action::ScreenshotResizeSelection {
+                    width: -5,
+                    height: 2,
+                },
+            ),
+            (
+                &["screenshot-magnifier-zoom", "4"],
+                Action::ScreenshotMagnifierZoom {
+                    zoom: ScreenshotValueChange::Set(4),
+                },
+            ),
+            (
+                &["screenshot-magnifier-zoom", "-1"],
+                Action::ScreenshotMagnifierZoom {
+                    zoom: ScreenshotValueChange::Adjust(-1),
+                },
+            ),
+            (
+                &["confirm-screenshot", "--write-to-disk", "false"],
+                Action::ConfirmScreenshot {
+                    write_to_disk: false,
+                    format: None,
+                    quality: None,
+                },
+            ),
+            (
+                &[
+                    "confirm-screenshot",
+                    "--format",
+                    "avif",
+                    "--quality",
+                    "37.5",
+                ],
+                Action::ConfirmScreenshot {
+                    write_to_disk: true,
+                    format: Some(ScreenshotFormat::Avif),
+                    quality: Some(37.5),
+                },
+            ),
+            (
+                &["confirm-screenshot"],
+                Action::ConfirmScreenshot {
+                    write_to_disk: true,
+                    format: None,
+                    quality: None,
+                },
+            ),
+            (&["screenshot-confirm"], Action::ScreenshotConfirm {}),
+            (&["screenshot-cancel"], Action::ScreenshotCancel {}),
+            (&["cancel-screenshot"], Action::CancelScreenshot {}),
+            (&["screenshot-undo"], Action::ScreenshotUndo {}),
+            (&["screenshot-redo"], Action::ScreenshotRedo {}),
+            (
+                &["screenshot-toggle-palette"],
+                Action::ScreenshotTogglePalette {},
+            ),
+            (
+                &["screenshot-toggle-pointer"],
+                Action::ScreenshotTogglePointer {},
+            ),
+            (&["screenshot-focus-next"], Action::ScreenshotFocusNext {}),
+            (
+                &["screenshot-focus-previous"],
+                Action::ScreenshotFocusPrevious {},
+            ),
+            (
+                &["screenshot-arrow-color", "#0080ff"],
+                Action::ScreenshotArrowColor {
+                    color: ScreenshotColor::new(0x00, 0x80, 0xff),
+                },
+            ),
+            (
+                &["screenshot-rectangle-color", "#0080ff"],
+                Action::ScreenshotRectangleColor {
+                    color: ScreenshotColor::new(0x00, 0x80, 0xff),
+                },
+            ),
+            (&["screenshot-toggle-axes"], Action::ScreenshotToggleAxes {}),
+            (
+                &["screenshot-set-axes", "false"],
+                Action::ScreenshotSetAxes { enabled: false },
+            ),
+            (
+                &["screenshot-tool", "arrow"],
+                Action::ScreenshotTool {
+                    tool: ScreenshotTool::Arrow,
+                },
+            ),
+            (
+                &["screenshot-tool", "rectangle"],
+                Action::ScreenshotTool {
+                    tool: ScreenshotTool::Rectangle,
+                },
+            ),
+        ];
+
+        for (args, expected) in cases {
+            let argv: Vec<&str> = ["niri msg action"]
+                .into_iter()
+                .chain(args.iter().copied())
+                .collect();
+            let action = Action::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+            // Action does not implement PartialEq; compare the serialized forms.
+            assert_eq!(
+                serde_json::to_value(&action).unwrap(),
+                serde_json::to_value(expected).unwrap(),
+                "{argv:?}: got {action:?}"
+            );
+        }
+
+        // The per-tool width and blur-strength actions are replaced by the single
+        // `screenshot-context` action; their old names and the intermediate
+        // `screenshot-factor` name must not parse.
+        for name in [
+            "screenshot-brush-width",
+            "screenshot-arrow-width",
+            "screenshot-rectangle-width",
+            "screenshot-blur-strength",
+            "screenshot-factor",
+        ] {
+            let argv = ["niri", "msg", "action", name, "6"];
+            assert!(
+                Action::try_parse_from(&argv).is_err(),
+                "{argv:?} must be rejected"
+            );
+        }
     }
 }

@@ -95,16 +95,13 @@ impl DBusServers {
             dbus.conn_screen_saver = try_start(screen_saver, is_session_instance);
 
             let (to_niri, from_screenshot) = calloop::channel::channel();
-            let (to_screenshot, from_niri) = async_channel::unbounded();
             niri.event_loop
                 .insert_source(from_screenshot, move |event, _, state| match event {
-                    calloop::channel::Event::Msg(msg) => {
-                        state.on_screen_shot_msg(&to_screenshot, msg)
-                    }
+                    calloop::channel::Event::Msg(msg) => state.on_screen_shot_msg(msg),
                     calloop::channel::Event::Closed => (),
                 })
                 .unwrap();
-            let screenshot = gnome_shell_screenshot::Screenshot::new(to_niri, from_niri);
+            let screenshot = gnome_shell_screenshot::Screenshot::new(to_niri);
             dbus.conn_screen_shot = try_start(screenshot, is_session_instance);
 
             let (to_niri, from_introspect) = calloop::channel::channel();

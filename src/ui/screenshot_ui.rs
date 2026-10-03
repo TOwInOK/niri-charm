@@ -5,22 +5,22 @@ use std::iter::zip;
 use std::rc::Rc;
 
 use anyhow::Context;
-use niri_config::{Action, Config};
-use niri_ipc::SizeChange;
+use niri_config::{Action, Config, ModKey};
+use niri_ipc::{ScreenshotColor as Color, ScreenshotTool as Tool, SizeChange};
 use smithay::backend::allocator::Fourcc;
-use smithay::backend::input::TouchSlot;
+use smithay::backend::input::{Keycode, TouchSlot};
 use smithay::backend::renderer::element::utils::{Relocate, RelocateRenderElement};
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture, Uniform};
 use smithay::backend::renderer::{ExportMem, Texture as _};
-use smithay::input::keyboard::{Keysym, ModifiersState};
 use smithay::output::{Output, WeakOutput};
 use smithay::utils::{Physical, Point, Rectangle, Scale, Size, Transform};
 
+use super::screenshot_axes::Axes;
 use super::screenshot_editor::{
-    self, Canvas, Color, Command, Control, Editor, EditorOutcome, Gesture, Tool, Toolbar,
-    ToolbarState,
+    self, Canvas, Command, Control, Edit, Editor, EditorOutcome, Toolbar, ToolbarState,
 };
+use super::screenshot_guides::Guides;
 use crate::animation::{Animation, Clock};
 use crate::layout::floating::DIRECTIONAL_MOVE_PX;
 use crate::niri_render_elements;
@@ -31,11 +31,22 @@ use crate::render_helpers::shaders::{ProgramType, Shaders};
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::{render_to_texture, RenderTarget};
+use crate::utils::screenshot::ExportRequest;
 use crate::utils::to_physical_precise_round;
 
-const SELECTION_BORDER: i32 = 2;
+#[derive(Debug, PartialEq)]
+pub enum EditorCommand {
+    Export(ExportRequest),
+    Close,
+}
 
 type Selection = (Output, Point<i32, Physical>, Point<i32, Physical>);
+
+enum ScreenshotContext {
+    Tool(Tool),
+    Canvas,
+    Overlay,
+}
 
 // Ideally the screenshot UI should support cross-output selections. However, that poses some
 // technical challenges when the outputs have different scales and such. So, this implementation
@@ -51,15 +62,18 @@ pub enum ScreenshotUi {
     },
     Open {
         selection: Selection,
-        selection_before: Option<Selection>,
         output_data: HashMap<Output, OutputData>,
-        button: Button,
+        interaction: Interaction,
         editor: Editor,
         show_pointer: bool,
         open_anim: Animation,
         clock: Clock,
         config: Rc<RefCell<Config>>,
         path: Option<String>,
+        pending_config: bool,
+        mod_key: ModKey,
+        hold_key: Option<Keycode>,
+        axes: Axes,
     },
 }
 
@@ -68,17 +82,38 @@ pub struct MoveState {
     // Cursor offset from selection.1 when starting the move.
     pointer_offset: Point<i32, Physical>,
     // If the move is initiated by a touch, this is the slot. If `None`, the move was initiated by
-    // holding Space.
+    // holding the configured selection-move key.
     touch_slot: Option<TouchSlot>,
 }
 
-pub enum Button {
-    Up,
-    Down {
-        touch_slot: Option<TouchSlot>,
-        last_pos: (Output, Point<i32, Physical>),
-        move_state: Option<MoveState>,
+pub enum Interaction {
+    Idle,
+    Selection(SelectionDrag),
+    Canvas {
+        output: Output,
+        slot: Option<TouchSlot>,
+        origin: Point<i32, Physical>,
+        edit: Edit,
     },
+    Toolbar {
+        output: Output,
+        slot: Option<TouchSlot>,
+        control: Control,
+    },
+    Overlay {
+        output: Output,
+        slot: Option<TouchSlot>,
+    },
+}
+pub struct SelectionDrag {
+    previous: Selection,
+    touch_slot: Option<TouchSlot>,
+    last_pos: (Output, Point<i32, Physical>),
+    mode: SelectionMode,
+}
+enum SelectionMode {
+    Select,
+    Move(MoveState),
 }
 
 pub struct OutputData {
@@ -91,6 +126,7 @@ pub struct OutputData {
     locations: [Point<i32, Physical>; 8],
     canvas: Canvas,
     toolbar: RefCell<Option<Toolbar>>,
+    guides: RefCell<Option<Guides>>,
     magnifier: [RefCell<Option<Magnifier>>; 3],
     composition: RefCell<Vec<PrimaryGpuTextureRenderElement>>,
 }
@@ -117,12 +153,6 @@ niri_render_elements! {
     }
 }
 
-impl Button {
-    fn is_down(&self) -> bool {
-        matches!(self, Self::Down { .. })
-    }
-}
-
 impl ScreenshotUi {
     pub fn new(clock: Clock, config: Rc<RefCell<Config>>) -> Self {
         Self::Closed {
@@ -134,12 +164,13 @@ impl ScreenshotUi {
 
     pub fn open(
         &mut self,
-        _renderer: &mut GlesRenderer,
         // Output, screencast, screen capture.
         screenshots: HashMap<Output, [OutputScreenshot; 3]>,
         default_output: Output,
         show_pointer: bool,
         path: Option<String>,
+        tool: Tool,
+        mod_key: ModKey,
     ) -> bool {
         if screenshots.is_empty() {
             return false;
@@ -153,9 +184,10 @@ impl ScreenshotUi {
         else {
             return false;
         };
-
+        let settings = config.borrow().screenshot.clone();
         let last_selection = last_selection
             .take()
+            .filter(|_| settings.selection.remember_selection)
             .and_then(|(weak, sel)| weak.upgrade().map(|output| (output, sel)));
         let selection = match last_selection {
             Some(selection) if screenshots.contains_key(&selection.0) => selection,
@@ -208,6 +240,7 @@ impl ScreenshotUi {
                     locations,
                     canvas: Canvas::default(),
                     toolbar: RefCell::new(None),
+                    guides: RefCell::new(None),
                     magnifier: Default::default(),
                     composition: RefCell::new(Vec::new()),
                 };
@@ -222,16 +255,20 @@ impl ScreenshotUi {
 
         *self = Self::Open {
             selection,
-            selection_before: None,
             output_data,
-            button: Button::Up,
-            editor: Editor::default(),
+            interaction: Interaction::Idle,
+            editor: Editor::new(settings, tool),
             show_pointer,
             open_anim,
             clock: clock.clone(),
             config: config.clone(),
             path,
+            pending_config: false,
+            mod_key,
+            hold_key: None,
+            axes: Axes::default(),
         };
+        self.refresh_config(mod_key);
 
         self.update_buffers();
 
@@ -263,6 +300,27 @@ impl ScreenshotUi {
         true
     }
 
+    pub fn begin_axes_hold(&mut self, key: Keycode) {
+        if let Self::Open { axes, editor, .. } = self {
+            axes.begin_hold(key, editor.pointer.as_ref().map(|(_, p)| *p));
+            editor.axes_enabled = axes.enabled();
+        }
+    }
+
+    pub fn end_axes_hold(&mut self, key: Keycode) {
+        if let Self::Open { axes, editor, .. } = self {
+            axes.end_hold(key, editor.pointer.as_ref().map(|(_, p)| *p));
+            editor.axes_enabled = axes.enabled();
+        }
+    }
+
+    pub fn set_axes_hold(&mut self, button: super::screenshot_axes::HoldButton, held: bool) {
+        if let Self::Open { axes, editor, .. } = self {
+            axes.pointer_hold(button, held, editor.pointer.as_ref().map(|(_, p)| *p));
+            editor.axes_enabled = axes.enabled();
+        }
+    }
+
     pub fn toggle_pointer(&mut self) {
         if let Self::Open { show_pointer, .. } = self {
             *show_pointer = !*show_pointer;
@@ -273,35 +331,50 @@ impl ScreenshotUi {
         matches!(self, ScreenshotUi::Open { .. })
     }
 
+    pub fn begin_move_hold(&mut self, key: Keycode) {
+        let Self::Open { hold_key, .. } = self else {
+            return;
+        };
+        if hold_key.is_none() {
+            *hold_key = Some(key);
+            self.set_space_down(true);
+        }
+    }
+
+    pub fn end_move_hold(&mut self, key: Keycode) {
+        let Self::Open { hold_key, .. } = self else {
+            return;
+        };
+        if *hold_key == Some(key) {
+            *hold_key = None;
+            self.set_space_down(false);
+        }
+    }
+
     pub fn set_space_down(&mut self, down: bool) {
         if let Self::Open { editor, .. } = self {
             editor.space_down = down;
         }
         if let Self::Open {
             selection,
-            button:
-                Button::Down {
-                    move_state,
-                    last_pos,
-                    ..
-                },
+            interaction: Interaction::Selection(SelectionDrag { mode, last_pos, .. }),
             ..
         } = self
         {
             if down {
-                if move_state.is_none() {
-                    *move_state = Some(MoveState {
+                if matches!(mode, SelectionMode::Select) {
+                    *mode = SelectionMode::Move(MoveState {
                         pointer_offset: last_pos.1 - selection.1,
                         touch_slot: None,
                     });
                 }
             } else {
-                // Only clear if moving with Space.
-                if let Some(MoveState {
+                // Only clear a move owned by the keyboard, not a touch.
+                if let SelectionMode::Move(MoveState {
                     touch_slot: None, ..
-                }) = move_state
+                }) = mode
                 {
-                    *move_state = None;
+                    *mode = SelectionMode::Select;
                 }
             }
         }
@@ -546,6 +619,7 @@ impl ScreenshotUi {
         let Self::Open {
             selection,
             output_data,
+            editor,
             ..
         } = self
         else {
@@ -561,6 +635,18 @@ impl ScreenshotUi {
             let size = data.size;
             let scale = data.scale;
 
+            let theme = &editor.settings.selection;
+            let border = (theme.border_width * scale).round() as i32;
+            let mut dim = theme.dim_color.to_array_unpremul();
+            dim[3] *= theme.dim_opacity as f32;
+            let dim = niri_config::Color::from_array_unpremul(dim);
+            for buffer in &mut buffers[..4] {
+                buffer.set_color(theme.border_color);
+            }
+            for buffer in &mut buffers[4..] {
+                buffer.set_color(dim);
+            }
+
             if output == selection_output {
                 // Check if the selection is still valid. If not, reset it back to default.
                 if !Rectangle::from_size(size).contains_rect(rect) {
@@ -571,8 +657,6 @@ impl ScreenshotUi {
                     *a = rect.loc;
                     *b = rect.loc + rect.size - Size::from((1, 1));
                 }
-
-                let border = to_physical_precise_round(scale, SELECTION_BORDER);
 
                 let resize = move |buffer: &mut SolidColorBuffer, w: i32, h: i32| {
                     let size = Size::<_, Physical>::from((w, h));
@@ -625,9 +709,10 @@ impl ScreenshotUi {
         let Self::Open {
             output_data,
             editor,
+            interaction,
+            axes,
             show_pointer,
             open_anim,
-            button,
             ..
         } = self
         else {
@@ -650,21 +735,36 @@ impl ScreenshotUi {
             image.push(data.screenshot[index].buffer.clone());
         }
         // Elements are emitted front-to-back. Only this method includes the overlay.
-        let dragging = button.is_down() || matches!(editor.gesture, Some(Gesture::Canvas { .. }));
+        let dragging = matches!(
+            interaction,
+            Interaction::Selection(_) | Interaction::Canvas { .. }
+        );
         let hover = editor
             .pointer
             .as_ref()
             .filter(|(owner, _)| owner == output && !dragging)
             .and_then(|(_, point)| {
-                screenshot_editor::hit_control(*point, data.size, data.scale, editor.palette_open)
+                screenshot_editor::hit_control(
+                    *point,
+                    data.size,
+                    data.scale,
+                    editor.palette_open,
+                    &editor.settings,
+                    editor.tool,
+                )
             });
         match Toolbar::render(
             &data.toolbar,
             renderer,
-            ToolbarState::new(editor, *show_pointer, result.is_err(), hover),
+            ToolbarState::new(editor, interaction, *show_pointer, result.is_err(), hover),
+            editor,
             data.size,
             data.scale,
-            if dragging { 0.5 } else { 1.0 },
+            if dragging {
+                editor.settings.toolbar.drag_opacity as f32
+            } else {
+                editor.settings.toolbar.opacity as f32
+            },
         ) {
             Ok(toolbar) => push(toolbar.into()),
             Err(err) => warn!("error rendering screenshot toolbar: {err:?}"),
@@ -677,12 +777,36 @@ impl ScreenshotUi {
                         data.size,
                         data.scale,
                         editor.palette_open,
+                        &editor.settings,
+                        editor.tool,
                     )
                 {
                     if let Err(err) =
                         self.render_magnifier(renderer, output, *point, index, &image, push)
                     {
                         warn!("error rendering screenshot magnifier: {err:?}");
+                    }
+                    let eligible =
+                        matches!(editor.tool, Tool::Draw | Tool::Arrow | Tool::Rectangle);
+                    let pen = axes.point().unwrap_or(*point);
+                    let center =
+                        (eligible && editor.axes_enabled).then(|| axes.origin().unwrap_or(*point));
+                    let brush_width = (editor.tool == Tool::Draw).then_some(editor.width);
+                    if center.is_some() || brush_width.is_some() {
+                        if let Err(err) = Guides::render(
+                            &data.guides,
+                            renderer,
+                            &editor.settings.axes,
+                            editor.settings_revision,
+                            data.size,
+                            data.scale,
+                            center,
+                            pen,
+                            brush_width,
+                            &mut |element| push(element.into()),
+                        ) {
+                            warn!("error rendering screenshot guides: {err:?}");
+                        }
                     }
                 }
             }
@@ -722,6 +846,7 @@ impl ScreenshotUi {
         let Self::Open {
             output_data,
             editor,
+            interaction,
             show_pointer,
             ..
         } = self
@@ -732,11 +857,11 @@ impl ScreenshotUi {
             .get(output)
             .context("screenshot output is missing")?;
         data.canvas
-            .prepare(renderer, editor, output, data.size, data.scale)?;
+            .prepare(renderer, editor, interaction, output, data.size, data.scale)?;
         let screenshot = &data.screenshot[index];
         data.canvas.elements(
             renderer,
-            editor.edits(output),
+            editor.edits(output, interaction),
             &screenshot.texture,
             index,
             data.scale,
@@ -764,6 +889,7 @@ impl ScreenshotUi {
         let Self::Open {
             output_data,
             editor,
+
             show_pointer,
             ..
         } = self
@@ -772,10 +898,12 @@ impl ScreenshotUi {
         };
         let data = &output_data[output];
         let zoom = editor.magnifier_zoom.level();
-        if zoom == 1 {
+        let settings = &editor.settings.magnifier;
+        if zoom < settings.show_from {
             return Ok(());
         }
-        let diameter = ((192. * data.scale).round() as i32)
+        let diameter = ((settings.diameter * data.scale).round() as i32)
+            .max(1)
             .min(data.size.w)
             .min(data.size.h);
         let extent = ((f64::from(diameter) / (f64::from(zoom) * data.scale)).ceil() as i32) | 1;
@@ -784,7 +912,7 @@ impl ScreenshotUi {
             point - Point::from((extent / 2, extent / 2)),
             Size::from((extent, extent)),
         );
-        let gap = (16. * data.scale).round() as i32;
+        let gap = (settings.pointer_gap * data.scale).round() as i32;
         let place = |p: i32, bound: i32| {
             let loc = if p + gap + diameter <= bound {
                 p + gap
@@ -833,6 +961,18 @@ impl ScreenshotUi {
                 Rc::new([
                     Uniform::new("source_size", extent as f32),
                     Uniform::new("zoom", zoom as f32),
+                    Uniform::new("border_color", settings.border_color.to_array_unpremul()),
+                    Uniform::new("border_width", settings.border_width as f32),
+                    Uniform::new("grid_color", settings.grid_color.to_array_unpremul()),
+                    Uniform::new("grid_from", settings.grid_from as f32),
+                    Uniform::new("grid_enabled", if settings.grid { 1.0f32 } else { 0.0f32 }),
+                    Uniform::new("cross_color", {
+                        let mut color = settings.cross_highlight_color.to_array_unpremul();
+                        if !settings.cross_highlight {
+                            color[3] = 0.;
+                        }
+                        color
+                    }),
                 ]),
                 HashMap::from([("image".to_owned(), texture)]),
                 Kind::Unspecified,
@@ -851,17 +991,14 @@ impl ScreenshotUi {
         Ok(())
     }
 
-    pub fn scroll_magnifier(&mut self, amount_v120: f64) -> bool {
-        match self {
-            Self::Open { editor, .. } => editor.magnifier_zoom.scroll(amount_v120),
-            Self::Closed { .. } => false,
-        }
-    }
-
     pub fn capture(
         &self,
         renderer: &mut GlesRenderer,
     ) -> anyhow::Result<(Size<i32, Physical>, Vec<u8>)> {
+        anyhow::ensure!(
+            !self.has_active_gesture(),
+            "screenshot gesture is unfinished"
+        );
         let Self::Open {
             selection,
             output_data,
@@ -895,28 +1032,374 @@ impl ScreenshotUi {
         let pixels = renderer.map_texture(&mapping)?;
         Ok((rect.size, pixels.to_vec()))
     }
+    pub fn has_active_gesture(&self) -> bool {
+        matches!(self, Self::Open { interaction, .. } if !matches!(interaction, Interaction::Idle))
+    }
 
-    pub fn action(&self, raw: Keysym, mods: ModifiersState) -> Option<Action> {
-        let Self::Open { button, editor, .. } = self else {
+    pub fn refresh_config(&mut self, key: ModKey) {
+        let active = self.has_active_gesture();
+        let Self::Open {
+            editor,
+
+            config,
+            pending_config,
+            mod_key,
+            ..
+        } = self
+        else {
+            return;
+        };
+        *mod_key = key;
+        *pending_config = active;
+        if active {
+            return;
+        }
+        let config = config.borrow();
+        editor.apply_settings(config.screenshot.clone());
+        Self::update_shortcuts(editor, &config, key);
+        drop(config);
+        self.update_buffers();
+    }
+
+    fn update_shortcuts(editor: &mut Editor, config: &Config, key: ModKey) {
+        let mut shortcuts: Vec<(Control, String)> = Vec::new();
+        for bind in &config.binds.0 {
+            let control = match &bind.action {
+                Action::ScreenshotTool { tool } => Some(Control::Tool(*tool)),
+                Action::ScreenshotTogglePalette => editor.color_tool().map(Control::Tool),
+                Action::ScreenshotUndo => Some(Control::Undo),
+                Action::ScreenshotRedo => Some(Control::Redo),
+                Action::ScreenshotTogglePointer => Some(Control::Pointer),
+                Action::ScreenshotToggleAxes(_) => Some(Control::Axes),
+                Action::ConfirmScreenshot {
+                    write_to_disk,
+                    format: None,
+                    quality: None,
+                } => Some(if *write_to_disk {
+                    Control::Save
+                } else {
+                    Control::Copy
+                }),
+                Action::ScreenshotPaletteColor { index } => editor
+                    .palette()
+                    .get(usize::from(*index).saturating_sub(1))
+                    .map(|c| Control::Color(rgb_color(*c))),
+                _ => None,
+            };
+            if let Some(control) = control {
+                let label = super::hotkey_overlay::key_name(false, key, &bind.key);
+                if let Some((_, text)) = shortcuts.iter_mut().find(|(c, _)| *c == control) {
+                    text.push_str(" / ");
+                    text.push_str(&label);
+                } else {
+                    shortcuts.push((control, label));
+                }
+            }
+        }
+        editor.set_shortcuts(shortcuts);
+    }
+
+    fn apply_pending_config(&mut self) {
+        if let Self::Open {
+            pending_config: true,
+            mod_key,
+            ..
+        } = self
+        {
+            let key = *mod_key;
+            self.refresh_config(key);
+        }
+    }
+
+    fn context(&self) -> Option<ScreenshotContext> {
+        let Self::Open {
+            editor,
+            output_data,
+            ..
+        } = self
+        else {
             return None;
         };
-
-        // Do not export an unfinished gesture.
-        if button.is_down() || editor.gesture.is_some() {
-            return (raw == Keysym::Escape).then_some(Action::CancelScreenshot);
+        if let Some(control) = editor.focus {
+            return Some(match control {
+                Control::Tool(tool) => ScreenshotContext::Tool(tool),
+                _ => ScreenshotContext::Overlay,
+            });
         }
+        let (output, point) = editor.pointer.as_ref()?;
+        let data = output_data.get(output)?;
+        let control = screenshot_editor::hit_control(
+            *point,
+            data.size,
+            data.scale,
+            editor.palette_open,
+            &editor.settings,
+            editor.tool,
+        );
+        if let Some(Control::Tool(tool)) = control {
+            return Some(ScreenshotContext::Tool(tool));
+        }
+        if control.is_some()
+            || screenshot_editor::overlay_contains(
+                *point,
+                data.size,
+                data.scale,
+                editor.palette_open,
+                &editor.settings,
+                editor.tool,
+            )
+        {
+            Some(ScreenshotContext::Overlay)
+        } else {
+            Some(ScreenshotContext::Canvas)
+        }
+    }
 
-        action(raw, mods)
+    /// Execute editor commands; only export and final close leave the editor domain.
+    pub fn execute_action(&mut self, action: &Action) -> Option<EditorCommand> {
+        if !self.is_open() {
+            return None;
+        }
+        let active = self.has_active_gesture();
+        if active
+            && !matches!(
+                action,
+                Action::ScreenshotCancel
+                    | Action::CancelScreenshot
+                    | Action::ScreenshotUndo
+                    | Action::ScreenshotMagnifierZoom { .. }
+                    | Action::ScreenshotContext { .. }
+                    | Action::ScreenshotTogglePointer
+                    | Action::ScreenshotSetPointer { .. }
+                    | Action::ScreenshotToggleAxes(_)
+                    | Action::ScreenshotSetAxes { .. }
+            )
+        {
+            return None;
+        }
+        let mut result = None;
+        match action {
+            Action::ScreenshotToggleAxes(false) => {
+                if let Self::Open { axes, editor, .. } = self {
+                    axes.toggle(editor.pointer.as_ref().map(|(_, p)| *p));
+                    editor.axes_enabled = axes.enabled();
+                }
+            }
+            Action::ScreenshotSetAxes { enabled } => {
+                if let Self::Open { axes, editor, .. } = self {
+                    axes.set_enabled(*enabled, editor.pointer.as_ref().map(|(_, p)| *p));
+                    editor.axes_enabled = axes.enabled();
+                }
+            }
+            Action::ScreenshotContext { change } => {
+                let context = self.context();
+                if let Self::Open { editor, .. } = self {
+                    match context {
+                        Some(ScreenshotContext::Tool(tool)) if !active => match tool {
+                            Tool::Draw | Tool::Arrow | Tool::Rectangle => {
+                                editor.change_tool_width(tool, *change);
+                            }
+                            Tool::Blur => {
+                                editor.change_blur_strength(*change);
+                            }
+                            Tool::Select => {}
+                        },
+                        Some(ScreenshotContext::Canvas) => {
+                            editor.magnifier_zoom.change(*change);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Action::ScreenshotArrowColor { color } => {
+                if let Self::Open { editor, .. } = self {
+                    editor.set_tool_color(Tool::Arrow, *color);
+                }
+            }
+            Action::ScreenshotRectangleColor { color } => {
+                if let Self::Open { editor, .. } = self {
+                    editor.set_tool_color(Tool::Rectangle, *color);
+                }
+            }
+            Action::ScreenshotTool { tool } => self.set_tool(*tool),
+            Action::ScreenshotTogglePalette => self.toggle_palette(),
+            Action::ScreenshotSetPalette { open } => {
+                if let Self::Open { editor, .. } = self {
+                    if (!*open || editor.color_tool().is_some()) && editor.palette_open != *open {
+                        self.toggle_palette();
+                    }
+                }
+            }
+            Action::ScreenshotPaletteColor { index } => {
+                if let Self::Open { editor, .. } = self {
+                    if editor.palette_open {
+                        if let Some(color) =
+                            editor.palette().get(usize::from(*index).saturating_sub(1))
+                        {
+                            let color = rgb_color(*color);
+                            self.activate_control(Control::Color(color));
+                        }
+                    }
+                }
+            }
+            Action::ScreenshotBrushColor { color } => self.set_color(*color),
+            Action::ScreenshotUndo => {
+                if !active
+                    || matches!(self, Self::Open { editor, interaction, .. } if matches!(interaction, Interaction::Canvas { .. }))
+                {
+                    self.undo();
+                }
+            }
+            Action::ScreenshotRedo => self.redo(),
+            Action::ScreenshotTogglePointer => self.toggle_pointer(),
+            Action::ScreenshotSetPointer {
+                show_pointer: value,
+            } => {
+                if let Self::Open { show_pointer, .. } = self {
+                    *show_pointer = *value;
+                }
+            }
+            Action::ScreenshotMagnifierZoom { zoom } => {
+                if let Self::Open { editor, .. } = self {
+                    editor.magnifier_zoom.change(*zoom);
+                }
+            }
+            Action::ScreenshotMoveSelection { x, y } => self.adjust_selection(*x, *y, false),
+            Action::ScreenshotResizeSelection { width, height } => {
+                self.adjust_selection(*width, *height, true)
+            }
+            Action::ScreenshotFocusNext => self.focus_control(false),
+            Action::ScreenshotFocusPrevious => self.focus_control(true),
+            Action::ScreenshotConfirm => {
+                let focus = if let Self::Open { editor, .. } = self {
+                    editor.focus
+                } else {
+                    None
+                };
+                result = Some(match focus.map(|c| self.activate_control(c)) {
+                    Some(EditorOutcome::Changed) => return None,
+                    Some(EditorOutcome::Copy) => {
+                        EditorCommand::Export(ExportRequest::ClipboardOnly)
+                    }
+                    _ => EditorCommand::Export(ExportRequest::Save {
+                        path: None,
+                        format: None,
+                        quality: None,
+                    }),
+                });
+            }
+            Action::ConfirmScreenshot {
+                write_to_disk,
+                format,
+                quality,
+            } => {
+                result = Some(EditorCommand::Export(if *write_to_disk {
+                    ExportRequest::Save {
+                        path: None,
+                        format: *format,
+                        quality: *quality,
+                    }
+                } else {
+                    ExportRequest::ClipboardOnly
+                }))
+            }
+            Action::CancelScreenshot => result = Some(EditorCommand::Close),
+            Action::ScreenshotCancel => {
+                if let Self::Open { editor, .. } = self {
+                    if editor.palette_open {
+                        editor.palette_open = false;
+                        editor.focus = editor.focus.map(|_| Control::Tool(editor.tool));
+                        return None;
+                    }
+                }
+                if !self.cancel_edit() {
+                    result = Some(EditorCommand::Close);
+                }
+            }
+            _ => {}
+        }
+        self.apply_pending_config();
+        result
+    }
+
+    fn adjust_selection(&mut self, x: i32, y: i32, resize: bool) {
+        let Self::Open {
+            selection: (output, a, b),
+            output_data,
+            ..
+        } = self
+        else {
+            return;
+        };
+        let size = output_data[output].size;
+        let rect = rect_from_corner_points(*a, *b);
+        if resize {
+            let width = rect.size.w.saturating_add(x).clamp(1, size.w - rect.loc.x);
+            let height = rect.size.h.saturating_add(y).clamp(1, size.h - rect.loc.y);
+            *a = rect.loc;
+            *b = rect.loc + Point::from((width - 1, height - 1));
+        } else {
+            let dx = x.clamp(-rect.loc.x, size.w - rect.loc.x - rect.size.w);
+            let dy = y.clamp(-rect.loc.y, size.h - rect.loc.y - rect.size.h);
+            *a += Point::from((dx, dy));
+            *b += Point::from((dx, dy));
+        }
+        self.update_buffers();
+    }
+
+    fn focus_control(&mut self, backwards: bool) {
+        let Self::Open {
+            editor,
+            interaction,
+            ..
+        } = self
+        else {
+            return;
+        };
+        let controls = screenshot_editor::CONTROLS.iter().copied().chain(
+            editor
+                .palette()
+                .iter()
+                .copied()
+                .map(|color| Control::Color(rgb_color(color))),
+        );
+        let enabled = |control: &Control| {
+            screenshot_editor::control_enabled(*control, editor, interaction)
+                && (!matches!(control, Control::Color(_)) || editor.palette_open)
+        };
+        let count = controls.clone().filter(enabled).count();
+        if count == 0 {
+            return;
+        }
+        let current = controls
+            .clone()
+            .filter(enabled)
+            .position(|c| Some(c) == editor.focus);
+        let next = match (current, backwards) {
+            (Some(i), true) => (i + count - 1) % count,
+            (Some(i), false) => (i + 1) % count,
+            (None, true) => count - 1,
+            (None, false) => 0,
+        };
+        editor.focus = controls.filter(enabled).nth(next);
     }
     fn toggle_palette(&mut self) {
         if let Self::Open { editor, .. } = self {
-            if editor.tool == Tool::Draw {
+            if editor.color_tool().is_some() {
                 editor.palette_open = !editor.palette_open;
                 if editor.focus.is_some() {
                     editor.focus = Some(if editor.palette_open {
-                        Control::Color(editor.color)
+                        if editor
+                            .palette()
+                            .iter()
+                            .any(|c| rgb_color(*c) == editor.tool_color(editor.tool))
+                        {
+                            Control::Color(editor.tool_color(editor.tool))
+                        } else {
+                            Control::Tool(editor.tool)
+                        }
                     } else {
-                        Control::Tool(Tool::Draw)
+                        Control::Tool(editor.tool)
                     });
                 }
             }
@@ -924,23 +1407,31 @@ impl ScreenshotUi {
     }
 
     fn activate_control(&mut self, control: Control) -> EditorOutcome {
-        let Self::Open { editor, .. } = self else {
+        let Self::Open {
+            editor,
+            interaction,
+            ..
+        } = self
+        else {
             return EditorOutcome::Changed;
         };
-        if !screenshot_editor::control_enabled(control, editor) {
+        if !screenshot_editor::control_enabled(control, editor, interaction) {
             return EditorOutcome::Changed;
         }
         match control {
             Control::Tool(tool) => {
                 let focused = editor.focus.is_some();
                 let palette_open = editor.palette_open;
+                let open_palette = matches!(tool, Tool::Draw | Tool::Arrow | Tool::Rectangle)
+                    && editor.tool_settings(tool).open_palette_on_click;
+                let repeated = editor.tool == tool;
                 self.set_tool(tool);
                 if focused {
                     if let Self::Open { editor, .. } = self {
                         editor.focus = Some(control);
                     }
                 }
-                if tool == Tool::Draw {
+                if repeated && open_palette {
                     if let Self::Open { editor, .. } = self {
                         editor.palette_open = palette_open;
                     }
@@ -948,141 +1439,26 @@ impl ScreenshotUi {
                 }
             }
             Control::Color(color) => {
-                editor.palette_open = false;
-                editor.focus = editor.focus.map(|_| Control::Tool(Tool::Draw));
-                self.set_color(color);
+                if editor.tool_settings(editor.tool).close_palette_on_select {
+                    editor.palette_open = false;
+                    editor.focus = editor.focus.map(|_| Control::Tool(editor.tool));
+                } else {
+                    editor.focus = editor.focus.map(|_| Control::Color(color));
+                }
+                if let Some(tool) = editor.color_tool() {
+                    editor.set_tool_color(tool, color);
+                }
             }
             Control::Undo => self.undo(),
             Control::Redo => self.redo(),
+            Control::Axes => {
+                self.execute_action(&Action::ScreenshotToggleAxes(false));
+            }
             Control::Pointer => self.toggle_pointer(),
             Control::Save => return EditorOutcome::Save,
             Control::Copy => return EditorOutcome::Copy,
         }
         EditorOutcome::Changed
-    }
-
-    /// Handle hardcoded editor controls before configurable compositor bindings.
-    /// The outer option denotes ownership; the inner option requests a compositor action.
-    pub fn handle_editor_key(
-        &mut self,
-        raw: Keysym,
-        mods: ModifiersState,
-    ) -> Option<Option<Action>> {
-        let Self::Open { editor, button, .. } = self else {
-            return None;
-        };
-        if raw == Keysym::Escape {
-            if editor.palette_open {
-                editor.palette_open = false;
-                editor.focus = editor.focus.map(|_| Control::Tool(Tool::Draw));
-                return Some(None);
-            }
-            if self.cancel_edit() {
-                return Some(None);
-            }
-            if let Self::Open {
-                button,
-                selection,
-                selection_before,
-                ..
-            } = self
-            {
-                if button.is_down() {
-                    *button = Button::Up;
-                    if let Some(previous) = selection_before.take() {
-                        *selection = previous;
-                    }
-                    self.update_buffers();
-                    return Some(None);
-                }
-            }
-            return None;
-        }
-        if mods.ctrl || mods.alt || mods.logo {
-            return None;
-        }
-        if raw == Keysym::space {
-            return Some(None);
-        }
-        if raw == Keysym::Tab || raw == Keysym::ISO_Left_Tab {
-            if button.is_down() || editor.gesture.is_some() {
-                return Some(None);
-            }
-            let controls = screenshot_editor::CONTROLS.iter().copied().chain(
-                screenshot_editor::COLORS
-                    .iter()
-                    .copied()
-                    .map(Control::Color),
-            );
-            let enabled = |control: &Control| {
-                screenshot_editor::control_enabled(*control, editor)
-                    && (!matches!(control, Control::Color(_)) || editor.palette_open)
-            };
-            let count = controls.clone().filter(enabled).count();
-            let current = controls
-                .clone()
-                .filter(enabled)
-                .position(|c| Some(c) == editor.focus);
-            let backwards = mods.shift || raw == Keysym::ISO_Left_Tab;
-            let next = match (current, backwards) {
-                (Some(i), true) => (i + count - 1) % count,
-                (Some(i), false) => (i + 1) % count,
-                (None, true) => count - 1,
-                (None, false) => 0,
-            };
-            editor.focus = controls.filter(enabled).nth(next);
-            return Some(None);
-        }
-        if mods.shift {
-            return None;
-        }
-        if button.is_down() || editor.gesture.is_some() {
-            return matches!(
-                raw,
-                Keysym::v | Keysym::b | Keysym::r | Keysym::c | Keysym::Return
-            )
-            .then_some(None);
-        }
-        let tool = match raw {
-            Keysym::v => Some(Tool::Select),
-            Keysym::b => Some(Tool::Draw),
-            Keysym::r => Some(Tool::Blur),
-            _ => None,
-        };
-        if let Some(tool) = tool {
-            self.set_tool(tool);
-            return Some(None);
-        }
-        if raw == Keysym::c {
-            self.toggle_palette();
-            return Some(None);
-        }
-        let control = match raw {
-            Keysym::Return if !button.is_down() && editor.gesture.is_none() => editor.focus?,
-            Keysym::_1
-            | Keysym::_2
-            | Keysym::_3
-            | Keysym::_4
-            | Keysym::_5
-            | Keysym::_6
-            | Keysym::_7
-                if editor.palette_open =>
-            {
-                let index = (raw.raw() - Keysym::_1.raw()) as usize;
-                Control::Color(screenshot_editor::COLORS[index])
-            }
-            _ => return None,
-        };
-        let outcome = self.activate_control(control);
-        Some(match outcome {
-            EditorOutcome::Changed => None,
-            EditorOutcome::Save => Some(Action::ConfirmScreenshot {
-                write_to_disk: true,
-            }),
-            EditorOutcome::Copy => Some(Action::ConfirmScreenshot {
-                write_to_disk: false,
-            }),
-        })
     }
 
     pub fn selection_output(&self) -> Option<&Output> {
@@ -1098,14 +1474,12 @@ impl ScreenshotUi {
     }
 
     pub fn motion_output(&self) -> Option<&Output> {
-        if let Self::Open { editor, .. } = self {
-            if let Some(
-                Gesture::Canvas { output, .. }
-                | Gesture::Toolbar { output, .. }
-                | Gesture::Overlay { output, .. },
-            ) = &editor.gesture
-            {
-                return Some(output);
+        if let Self::Open { interaction, .. } = self {
+            match interaction {
+                Interaction::Canvas { output, .. }
+                | Interaction::Toolbar { output, .. }
+                | Interaction::Overlay { output, .. } => return Some(output),
+                _ => (),
             }
         }
         self.selection_output()
@@ -1142,57 +1516,75 @@ impl ScreenshotUi {
             selection,
             output_data,
             editor,
-            button,
+            interaction,
+            axes,
             ..
         } = self
         else {
             return;
         };
-        let owner = match &editor.gesture {
-            Some(
-                Gesture::Canvas {
-                    output,
-                    slot: owner,
-                    ..
-                }
-                | Gesture::Toolbar {
-                    output,
-                    slot: owner,
-                    ..
-                }
-                | Gesture::Overlay {
-                    output,
-                    slot: owner,
-                },
-            ) => {
+        let owner = match &*interaction {
+            Interaction::Canvas {
+                output,
+                slot: owner,
+                ..
+            }
+            | Interaction::Toolbar {
+                output,
+                slot: owner,
+                ..
+            }
+            | Interaction::Overlay {
+                output,
+                slot: owner,
+            } => {
                 if *owner != slot {
                     return;
                 }
                 output
             }
-            None => &selection.0,
+            _ => &selection.0,
         };
         let data = &output_data[owner];
         editor.pointer = Rectangle::from_size(data.size)
             .contains(point)
             .then(|| (owner.clone(), point));
         editor.focus = None;
-        if editor.gesture.is_some() {
+        if matches!(
+            interaction,
+            Interaction::Canvas { .. } | Interaction::Toolbar { .. } | Interaction::Overlay { .. }
+        ) {
             let point = Point::from((
                 point.x.clamp(0, data.size.w - 1),
                 point.y.clamp(0, data.size.h - 1),
             ));
-            if matches!(editor.gesture, Some(Gesture::Canvas { .. })) {
-                data.canvas.damage(editor.motion(point, slot));
+            if matches!(interaction, Interaction::Canvas { .. }) {
+                let point = if matches!(interaction, Interaction::Canvas { slot: owner, .. } if *owner == slot)
+                {
+                    let projected =
+                        axes.project(point, editor.settings.axes.switch_threshold * data.scale);
+                    if let Some(corner) = axes.take_corner() {
+                        data.canvas
+                            .damage(Editor::motion(interaction, corner, slot));
+                    }
+                    Point::from((
+                        projected.x.clamp(0, data.size.w - 1),
+                        projected.y.clamp(0, data.size.h - 1),
+                    ))
+                } else {
+                    point
+                };
+                data.canvas.damage(Editor::motion(interaction, point, slot));
                 editor.revision = editor.revision.wrapping_add(1);
             }
             return;
         }
-        let Button::Down {
+        let Interaction::Selection(SelectionDrag {
             touch_slot,
             last_pos,
-            move_state,
-        } = button
+            mode,
+            ..
+        }) = interaction
         else {
             return;
         };
@@ -1200,7 +1592,7 @@ impl ScreenshotUi {
             return;
         }
         last_pos.1 = point;
-        if let Some(move_state) = move_state {
+        if let SelectionMode::Move(move_state) = mode {
             let delta = point - (selection.1 + move_state.pointer_offset);
             let desired = rect_from_corner_points(selection.1 + delta, selection.2 + delta);
             let bounds = Rectangle::from_size(data.size - desired.size);
@@ -1226,10 +1618,10 @@ impl ScreenshotUi {
     ) -> bool {
         let Self::Open {
             selection,
-            selection_before,
             output_data,
             editor,
-            button,
+            interaction,
+            axes,
             ..
         } = self
         else {
@@ -1238,63 +1630,71 @@ impl ScreenshotUi {
         let Some(data) = output_data.get(&output) else {
             return false;
         };
-        if editor.gesture.is_some() {
+        if matches!(
+            interaction,
+            Interaction::Canvas { .. } | Interaction::Toolbar { .. } | Interaction::Overlay { .. }
+        ) {
             return false;
         }
-        if let Some(new_slot) = slot {
-            if let Button::Down {
-                touch_slot,
-                move_state,
-                last_pos,
-            } = button
-            {
-                if *touch_slot != slot && move_state.is_none() {
-                    *move_state = Some(MoveState {
-                        pointer_offset: last_pos.1 - selection.1,
+        if let Interaction::Selection(drag) = interaction {
+            if let Some(new_slot) = slot {
+                if drag.touch_slot != slot && matches!(drag.mode, SelectionMode::Select) {
+                    drag.mode = SelectionMode::Move(MoveState {
+                        pointer_offset: drag.last_pos.1 - selection.1,
                         touch_slot: Some(new_slot),
                     });
                 }
             }
-        }
-        if button.is_down() {
             return false;
         }
         editor.pointer = Some((output.clone(), point));
         editor.focus = None;
-        if let Some(control) =
-            screenshot_editor::hit_control(point, data.size, data.scale, editor.palette_open)
-        {
-            if !screenshot_editor::control_enabled(control, editor) {
-                editor.gesture = Some(Gesture::Overlay { output, slot });
+        if let Some(control) = screenshot_editor::hit_control(
+            point,
+            data.size,
+            data.scale,
+            editor.palette_open,
+            &editor.settings,
+            editor.tool,
+        ) {
+            if !screenshot_editor::control_enabled(control, editor, interaction) {
+                *interaction = Interaction::Overlay { output, slot };
                 return true;
             }
-            editor.gesture = Some(Gesture::Toolbar {
+            *interaction = Interaction::Toolbar {
                 output,
                 slot,
                 control,
-            });
+            };
             return true;
         }
         if editor.palette_open
-            || screenshot_editor::overlay_contains(point, data.size, data.scale, false)
+            || screenshot_editor::overlay_contains(
+                point,
+                data.size,
+                data.scale,
+                false,
+                &editor.settings,
+                editor.tool,
+            )
         {
             editor.palette_open = false;
-            editor.gesture = Some(Gesture::Overlay { output, slot });
+            *interaction = Interaction::Overlay { output, slot };
             return true;
         }
         if move_existing || editor.space_down {
             if output != selection.0 {
                 return false;
             }
-            *selection_before = Some(selection.clone());
-            *button = Button::Down {
+            *interaction = Interaction::Selection(SelectionDrag {
+                previous: selection.clone(),
                 touch_slot: slot,
                 last_pos: (output, point),
-                move_state: Some(MoveState {
+                mode: SelectionMode::Move(MoveState {
                     pointer_offset: point - selection.1,
                     touch_slot: slot,
                 }),
-            };
+            });
             return true;
         }
         let point = Point::from((
@@ -1302,8 +1702,12 @@ impl ScreenshotUi {
             point.y.clamp(0, data.size.h - 1),
         ));
         if editor.tool != Tool::Select {
-            editor.begin(output.clone(), point, slot);
-            if let Some(Gesture::Canvas { edit, .. }) = &editor.gesture {
+            axes.begin(
+                point,
+                matches!(editor.tool, Tool::Draw | Tool::Arrow | Tool::Rectangle),
+            );
+            *interaction = editor.begin(output.clone(), point, slot);
+            if let Interaction::Canvas { edit, .. } = &*interaction {
                 data.canvas.damage(edit.stroke_bounds());
             }
             editor.revision = editor.revision.wrapping_add(1);
@@ -1312,86 +1716,89 @@ impl ScreenshotUi {
             }
             return true;
         }
-        *selection_before = Some(selection.clone());
-        *button = Button::Down {
+        *interaction = Interaction::Selection(SelectionDrag {
+            previous: selection.clone(),
             touch_slot: slot,
             last_pos: (output.clone(), point),
-            move_state: None,
-        };
+            mode: SelectionMode::Select,
+        });
         *selection = (output, point, point);
         self.update_buffers();
         true
     }
 
     pub fn pointer_up(&mut self, slot: Option<TouchSlot>) -> Option<EditorOutcome> {
+        let outcome = self.pointer_up_inner(slot);
+        self.apply_pending_config();
+        outcome
+    }
+
+    fn pointer_up_inner(&mut self, slot: Option<TouchSlot>) -> Option<EditorOutcome> {
         let Self::Open {
             selection,
-            selection_before,
             output_data,
             editor,
-            button,
+            interaction,
+            axes,
             ..
         } = self
         else {
             return None;
         };
-        if let Some(gesture) = &editor.gesture {
-            let (Gesture::Canvas { slot: owner, .. }
-            | Gesture::Toolbar { slot: owner, .. }
-            | Gesture::Overlay { slot: owner, .. }) = gesture;
-            if *owner != slot {
+        match &*interaction {
+            Interaction::Idle => return None,
+            Interaction::Canvas { slot: owner, .. }
+            | Interaction::Toolbar { slot: owner, .. }
+            | Interaction::Overlay { slot: owner, .. }
+                if *owner != slot =>
+            {
+                return None
+            }
+            Interaction::Selection(drag) if drag.touch_slot != slot => {
+                if matches!(&drag.mode, SelectionMode::Move(state) if state.touch_slot == slot) {
+                    if let Interaction::Selection(drag) = interaction {
+                        drag.mode = SelectionMode::Select;
+                    }
+                }
                 return None;
             }
-            match editor.gesture.take().unwrap() {
-                Gesture::Overlay { .. } => return Some(EditorOutcome::Changed),
-                Gesture::Canvas { output, edit, .. } => {
-                    editor.history.push(Command { output, edit });
-                    editor.redo.clear();
-                    editor.revision = editor.revision.wrapping_add(1);
+            _ => (),
+        }
+        match std::mem::replace(interaction, Interaction::Idle) {
+            Interaction::Canvas { output, edit, .. } => {
+                axes.end();
+                editor.history.push(Command { output, edit });
+                editor.redo.clear();
+                editor.revision = editor.revision.wrapping_add(1);
+                return Some(EditorOutcome::Changed);
+            }
+            Interaction::Toolbar {
+                output, control, ..
+            } => {
+                let data = &output_data[&output];
+                let hit = editor
+                    .pointer
+                    .as_ref()
+                    .filter(|(owner, _)| owner == &output)
+                    .and_then(|(_, point)| {
+                        screenshot_editor::hit_control(
+                            *point,
+                            data.size,
+                            data.scale,
+                            editor.palette_open,
+                            &editor.settings,
+                            editor.tool,
+                        )
+                    });
+                if hit != Some(control) {
                     return Some(EditorOutcome::Changed);
                 }
-                Gesture::Toolbar {
-                    output, control, ..
-                } => {
-                    let data = &output_data[&output];
-                    let hit = editor
-                        .pointer
-                        .as_ref()
-                        .filter(|(owner, _)| *owner == output)
-                        .and_then(|(_, point)| {
-                            screenshot_editor::hit_control(
-                                *point,
-                                data.size,
-                                data.scale,
-                                editor.palette_open,
-                            )
-                        });
-                    if hit != Some(control) {
-                        return Some(EditorOutcome::Changed);
-                    }
-                    return Some(self.activate_control(control));
-                }
+                return Some(self.activate_control(control));
             }
+            Interaction::Overlay { .. } => return Some(EditorOutcome::Changed),
+            Interaction::Selection(_) => (),
+            Interaction::Idle => unreachable!(),
         }
-        let Button::Down {
-            touch_slot,
-            move_state,
-            ..
-        } = button
-        else {
-            return None;
-        };
-        if *touch_slot != slot {
-            if move_state
-                .as_ref()
-                .is_some_and(|state| state.touch_slot.is_some() && state.touch_slot == slot)
-            {
-                *move_state = None;
-            }
-            return None;
-        }
-        *button = Button::Up;
-        *selection_before = None;
         let (output, a, b) = selection;
         let rect = rect_from_corner_points(*a, *b);
         if rect.size == Size::from((1, 1)) {
@@ -1408,28 +1815,46 @@ impl ScreenshotUi {
     fn cancel_edit(&mut self) -> bool {
         let Self::Open {
             editor,
+            interaction,
             output_data,
+            axes,
             ..
         } = self
         else {
             return false;
         };
-        let Some(gesture) = editor.gesture.take() else {
-            return false;
-        };
-        if let Gesture::Canvas { output, edit, .. } = gesture {
-            output_data[&output].canvas.damage(edit.stroke_bounds());
-            editor.revision = editor.revision.wrapping_add(1);
+        let state = std::mem::replace(interaction, Interaction::Idle);
+        match state {
+            Interaction::Idle => return false,
+            Interaction::Canvas { output, edit, .. } => {
+                axes.end();
+                output_data[&output].canvas.damage(edit.stroke_bounds());
+                editor.revision = editor.revision.wrapping_add(1);
+            }
+            Interaction::Selection(drag) => {
+                if let Self::Open { selection, .. } = self {
+                    *selection = drag.previous;
+                }
+                self.update_buffers();
+            }
+            _ => (),
         }
         true
     }
 
     pub fn set_tool(&mut self, tool: Tool) {
         self.cancel_edit();
-        if let Self::Open { editor, .. } = self {
+        if let Self::Open {
+            editor,
+            config,
+            mod_key,
+            ..
+        } = self
+        {
             editor.tool = tool;
             editor.palette_open = false;
             editor.focus = None;
+            Self::update_shortcuts(editor, &config.borrow(), *mod_key);
         }
     }
 
@@ -1445,6 +1870,7 @@ impl ScreenshotUi {
         }
         let Self::Open {
             editor,
+
             output_data,
             ..
         } = self
@@ -1466,6 +1892,7 @@ impl ScreenshotUi {
         }
         let Self::Open {
             editor,
+
             output_data,
             ..
         } = self
@@ -1529,44 +1956,12 @@ impl OutputScreenshot {
     }
 }
 
-fn action(raw: Keysym, mods: ModifiersState) -> Option<Action> {
-    if raw == Keysym::Escape {
-        return Some(Action::CancelScreenshot);
+fn rgb_color(color: niri_config::Color) -> Color {
+    Color {
+        r: (color.r * 255.).round() as u8,
+        g: (color.g * 255.).round() as u8,
+        b: (color.b * 255.).round() as u8,
     }
-
-    if (mods.ctrl ^ mods.alt) && !mods.logo {
-        if raw == Keysym::z {
-            return Some(if mods.shift {
-                Action::ScreenshotRedo
-            } else {
-                Action::ScreenshotUndo
-            });
-        }
-        if mods.ctrl && !mods.shift && raw == Keysym::y {
-            return Some(Action::ScreenshotRedo);
-        }
-    }
-
-    if mods.alt || mods.shift || mods.logo {
-        return None;
-    }
-
-    if (!mods.ctrl && raw == Keysym::Return) || (mods.ctrl && raw == Keysym::s) {
-        return Some(Action::ConfirmScreenshot {
-            write_to_disk: true,
-        });
-    }
-    if mods.ctrl && raw == Keysym::c {
-        return Some(Action::ConfirmScreenshot {
-            write_to_disk: false,
-        });
-    }
-
-    if !mods.ctrl && raw == Keysym::p {
-        return Some(Action::ScreenshotTogglePointer);
-    }
-
-    None
 }
 
 pub fn rect_from_corner_points(

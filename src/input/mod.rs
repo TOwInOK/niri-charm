@@ -52,8 +52,10 @@ use crate::layout::zoom::{ZoomSnapshot, ZOOM_SNAP_TO_ONE_EPSILON};
 use crate::layout::{ActivateWindow, LayoutElement as _};
 use crate::niri::{CastTarget, PointerVisibility, State};
 use crate::ui::mru::{WindowMru, WindowMruUi};
+use crate::ui::screenshot_axes::HoldButton;
 use crate::ui::screenshot_editor::EditorOutcome;
-use crate::ui::screenshot_ui::ScreenshotUi;
+use crate::ui::screenshot_ui::{EditorCommand, ScreenshotUi};
+use crate::utils::screenshot::ExportRequest;
 use crate::utils::spawning::{spawn, spawn_sh};
 use crate::utils::view::ViewportTransform;
 use crate::utils::{center, get_monotonic_time, CastSessionId, ResizeEdge};
@@ -581,6 +583,16 @@ impl State {
             // modifier changes, layout changes and config reloads.
             self.end_zoom_hold_for_trigger(ZoomHoldTrigger::Key(event.key_code()));
             self.end_zoom_lock_hold_for_trigger(ZoomHoldTrigger::Key(event.key_code()));
+
+            // End an active screenshot selection-move or axes hold owned by
+            // this key. Physical key code again: the release ends the hold
+            // even if modifiers changed, the config was reloaded or the key
+            // release was suppressed.
+            if self.niri.screenshot_ui.is_open() {
+                self.niri.screenshot_ui.end_move_hold(event.key_code());
+                self.niri.screenshot_ui.end_axes_hold(event.key_code());
+                self.niri.queue_redraw_all();
+            }
         }
 
         if pressed {
@@ -700,23 +712,6 @@ impl State {
                     }
                 }
 
-                if let Some(Keysym::space) = raw {
-                    this.niri.screenshot_ui.set_space_down(pressed);
-                }
-                if pressed {
-                    if let Some(raw) = raw {
-                        if let Some(action) = this.niri.screenshot_ui.handle_editor_key(raw, *mods)
-                        {
-                            this.niri.suppressed_keys.insert(key_code);
-                            if let Some(action) = action {
-                                this.do_action(action, false);
-                            }
-                            this.niri.queue_redraw_all();
-                            return FilterResult::Intercept(None);
-                        }
-                    }
-                }
-
                 if this.niri.region_selection.is_some() {
                     if pressed {
                         this.niri.suppressed_keys.insert(key_code);
@@ -782,10 +777,15 @@ impl State {
     pub(crate) fn start_key_repeat(&mut self, bind: Bind) {
         // Momentary zoom and zoom-lock are intrinsically non-repeatable:
         // they are driven by the press/release lifecycle, not by key repeat.
+        // The screenshot selection-move and axes holds are likewise owned by
+        // the physical key release.
         if !bind.repeat
             || matches!(
                 bind.action,
-                Action::Zoom(_, true, _) | Action::ZoomLock(true)
+                Action::Zoom(_, true, _)
+                    | Action::ZoomLock(true)
+                    | Action::ScreenshotMoveSelectionHold
+                    | Action::ScreenshotToggleAxes(true)
             )
         {
             return;
@@ -971,38 +971,70 @@ impl State {
                     });
                 }
             }
-            Action::ConfirmScreenshot { write_to_disk } => {
-                self.confirm_screenshot(write_to_disk);
+            Action::ConfirmScreenshot {
+                write_to_disk,
+                format,
+                quality,
+            } => {
+                self.confirm_screenshot(if write_to_disk {
+                    ExportRequest::Save {
+                        path: None,
+                        format,
+                        quality,
+                    }
+                } else {
+                    ExportRequest::ClipboardOnly
+                });
             }
             Action::CancelScreenshot => {
-                if !self.niri.screenshot_ui.is_open() {
-                    return;
-                }
-
-                self.niri.screenshot_ui.close();
-                self.niri
-                    .cursor_manager
-                    .set_cursor_image(CursorImageStatus::default_named());
-                self.niri.queue_redraw_all();
+                self.close_screenshot_ui();
             }
-            Action::ScreenshotTogglePointer => {
-                self.niri.screenshot_ui.toggle_pointer();
-                self.niri.queue_redraw_all();
-            }
-            Action::ScreenshotUndo => {
-                if self.niri.screenshot_ui.is_open() {
-                    self.niri.screenshot_ui.undo();
-                    self.niri.queue_redraw_all();
+            Action::ScreenshotMoveSelectionHold => {
+                // The selection-move hold is owned by the physical key:
+                // releasing that keycode ends it regardless of modifiers or
+                // reloads, so only a real key press may start it.
+                match hold_trigger {
+                    Some(ZoomHoldTrigger::Key(key)) => {
+                        self.niri.screenshot_ui.begin_move_hold(key);
+                        self.niri.queue_redraw_all();
+                    }
+                    _ => {
+                        warn!("ignoring screenshot-move-selection-hold without a physical key")
+                    }
                 }
             }
-            Action::ScreenshotRedo => {
-                if self.niri.screenshot_ui.is_open() {
-                    self.niri.screenshot_ui.redo();
-                    self.niri.queue_redraw_all();
+            Action::ScreenshotToggleAxes(true) => {
+                // The axes hold is owned by the physical control that started
+                // it: releasing that keycode or button ends it regardless of
+                // modifiers or reloads, so only a real press may start it.
+                // Releasing restores the toggled state that was set before the
+                // hold began.
+                match hold_trigger {
+                    Some(ZoomHoldTrigger::Key(key)) => {
+                        self.niri.screenshot_ui.begin_axes_hold(key);
+                        self.niri.queue_redraw_all();
+                    }
+                    Some(ZoomHoldTrigger::PointerButton(button)) => {
+                        self.niri
+                            .screenshot_ui
+                            .set_axes_hold(HoldButton::Pointer(button), true);
+                        self.niri.queue_redraw_all();
+                    }
+                    Some(ZoomHoldTrigger::TabletButton(button)) => {
+                        self.niri
+                            .screenshot_ui
+                            .set_axes_hold(HoldButton::Tablet(button), true);
+                        self.niri.queue_redraw_all();
+                    }
+                    _ => warn!("ignoring screenshot-toggle-axes hold=true without a physical trigger"),
                 }
             }
-            Action::Screenshot(show_cursor, path) => {
-                self.open_screenshot_ui(show_cursor, path);
+            Action::Screenshot {
+                tool,
+                show_pointer,
+                path,
+            } => {
+                self.open_screenshot_ui(show_pointer, path, tool);
                 self.niri.cancel_mru();
             }
             Action::ScreenshotWindow(write_to_disk, show_pointer, path) => {
@@ -2692,6 +2724,41 @@ impl State {
                     self.toggle_zoom(preset, lock);
                 }
             }
+            // Editor-local screenshot commands are executed by the editor
+            // itself, which enforces the gesture policies; only export and
+            // final close come back as compositor actions. ConfirmScreenshot
+            // and CancelScreenshot have explicit arms above since they are
+            // also reachable through IPC, and the holds have their own arms
+            // because they need the physical trigger.
+            Action::ScreenshotTool { .. }
+            | Action::ScreenshotTogglePalette
+            | Action::ScreenshotSetPalette { .. }
+            | Action::ScreenshotPaletteColor { .. }
+            | Action::ScreenshotBrushColor { .. }
+            | Action::ScreenshotContext { .. }
+            | Action::ScreenshotArrowColor { .. }
+            | Action::ScreenshotRectangleColor { .. }
+            | Action::ScreenshotUndo
+            | Action::ScreenshotRedo
+            | Action::ScreenshotTogglePointer
+            | Action::ScreenshotSetPointer { .. }
+            | Action::ScreenshotToggleAxes(false)
+            | Action::ScreenshotSetAxes { .. }
+            | Action::ScreenshotConfirm
+            | Action::ScreenshotCancel
+            | Action::ScreenshotMoveSelection { .. }
+            | Action::ScreenshotResizeSelection { .. }
+            | Action::ScreenshotMagnifierZoom { .. }
+            | Action::ScreenshotFocusNext
+            | Action::ScreenshotFocusPrevious => {
+                if let Some(action) = self.niri.screenshot_ui.execute_action(&action) {
+                    match action {
+                        EditorCommand::Export(request) => self.confirm_screenshot(request),
+                        EditorCommand::Close => self.close_screenshot_ui(),
+                    }
+                }
+                self.niri.queue_redraw_all();
+            }
             Action::TestAction => {
                 #[cfg(test)]
                 {
@@ -3097,6 +3164,15 @@ impl State {
         if button_state == ButtonState::Released {
             self.end_zoom_hold_for_trigger(ZoomHoldTrigger::PointerButton(button_code));
             self.end_zoom_lock_hold_for_trigger(ZoomHoldTrigger::PointerButton(button_code));
+            // End an axes hold owned by a pointer button, if any. The press
+            // went through the bind path, so its release is suppressed for
+            // clients; tracked by physical button like the key hold above.
+            if self.niri.screenshot_ui.is_open() {
+                self.niri
+                    .screenshot_ui
+                    .set_axes_hold(HoldButton::Pointer(button_code), false);
+                self.niri.queue_redraw_all();
+            }
         }
 
         // Ignore release events for mouse clicks that triggered a bind.
@@ -3148,7 +3224,11 @@ impl State {
                 }
             }
 
-            if is_mru_open || self.niri.mods_with_mouse_binds.contains(&modifiers) {
+            let screenshot_ui_open = self.niri.screenshot_ui.is_open();
+            if is_mru_open
+                || screenshot_ui_open
+                || self.niri.mods_with_mouse_binds.contains(&modifiers)
+            {
                 if let Some(bind) = match button {
                     Some(MouseButton::Left) => Some(Trigger::MouseLeft),
                     Some(MouseButton::Right) => Some(Trigger::MouseRight),
@@ -3161,10 +3241,7 @@ impl State {
                     let config = self.niri.config.borrow();
                     let bindings =
                         make_binds_iter(&config, &mut self.niri.window_mru_ui, modifiers);
-                    find_configured_bind(bindings, mod_key, trigger, mods)
-                })
-                .filter(|bind| {
-                    bind_usable_for_screenshot(&bind.action, self.niri.screenshot_ui.is_open())
+                    find_configured_bind(bindings, mod_key, trigger, mods, screenshot_ui_open)
                 }) {
                     self.niri.suppressed_buttons.insert(button_code);
                     self.handle_bind(
@@ -3419,8 +3496,12 @@ impl State {
                 }
             } else if let Some(capture) = self.niri.screenshot_ui.pointer_up(None) {
                 match capture {
-                    EditorOutcome::Save => self.confirm_screenshot(true),
-                    EditorOutcome::Copy => self.confirm_screenshot(false),
+                    EditorOutcome::Save => self.confirm_screenshot(ExportRequest::Save {
+                        path: None,
+                        format: None,
+                        quality: None,
+                    }),
+                    EditorOutcome::Copy => self.confirm_screenshot(ExportRequest::ClipboardOnly),
                     EditorOutcome::Changed => self.niri.queue_redraw_all(),
                 }
             }
@@ -3443,13 +3524,75 @@ impl State {
             return;
         }
 
+        // While the screenshot UI is open, wheel and touchpad scrolls are
+        // consumed: they go through the configured bind search (editor-local
+        // binds win over ordinary ones), and anything unbound is swallowed so
+        // neither desktop zoom nor clients see them.
         if self.niri.screenshot_ui.is_open() {
-            let amount = event
-                .amount_v120(Axis::Vertical)
-                .unwrap_or_else(|| event.amount(Axis::Vertical).unwrap_or(0.) * 8.);
-            if self.niri.screenshot_ui.scroll_magnifier(amount) {
-                self.niri.queue_redraw_all();
-            }
+            let (pos_x, neg_x, pos_y, neg_y) = match event.source() {
+                AxisSource::Wheel => (
+                    Trigger::WheelScrollRight,
+                    Trigger::WheelScrollLeft,
+                    Trigger::WheelScrollDown,
+                    Trigger::WheelScrollUp,
+                ),
+                AxisSource::Finger => (
+                    Trigger::TouchpadScrollRight,
+                    Trigger::TouchpadScrollLeft,
+                    Trigger::TouchpadScrollDown,
+                    Trigger::TouchpadScrollUp,
+                ),
+                _ => return,
+            };
+
+            let horizontal_v120 = event.amount_v120(Axis::Horizontal).unwrap_or(0.);
+            let vertical_v120 = event.amount_v120(Axis::Vertical).unwrap_or(0.);
+
+            let mods = self.niri.seat.get_keyboard().unwrap().modifier_state();
+            let modifiers = modifiers_from_state(mods);
+            let mod_key = self.backend.mod_key(&self.niri.config.borrow());
+
+            let (h_ticks, v_ticks, binds) = {
+                let config = self.niri.config.borrow();
+                let bindings = make_binds_iter(&config, &mut self.niri.window_mru_ui, modifiers);
+                let find = |trigger: Trigger| {
+                    find_configured_bind(bindings.clone(), mod_key, trigger, mods, true)
+                };
+                let binds = (find(pos_x), find(neg_x), find(pos_y), find(neg_y));
+                drop(bindings);
+                drop(config);
+
+                // High-resolution deltas accumulate through the existing
+                // trackers: one normalized wheel step runs the action once.
+                let (h_tracker, v_tracker) = if pos_x == Trigger::WheelScrollRight {
+                    (
+                        &mut self.niri.horizontal_wheel_tracker,
+                        &mut self.niri.vertical_wheel_tracker,
+                    )
+                } else {
+                    (
+                        &mut self.niri.horizontal_finger_scroll_tracker,
+                        &mut self.niri.vertical_finger_scroll_tracker,
+                    )
+                };
+                (
+                    h_tracker.accumulate(horizontal_v120),
+                    v_tracker.accumulate(vertical_v120),
+                    binds,
+                )
+            };
+            let (pos_x_bind, neg_x_bind, pos_y_bind, neg_y_bind) = binds;
+            let mut run = |bind: &Option<Bind>, ticks: i8| {
+                if let Some(bind) = bind {
+                    for _ in 0..ticks.unsigned_abs() {
+                        self.handle_bind(bind.clone(), None);
+                    }
+                }
+            };
+            run(&pos_x_bind, h_ticks.max(0));
+            run(&neg_x_bind, h_ticks.min(0));
+            run(&pos_y_bind, v_ticks.max(0));
+            run(&neg_y_bind, v_ticks.min(0));
             return;
         }
         let pointer = &self.niri.seat.get_pointer().unwrap();
@@ -3542,25 +3685,15 @@ impl State {
                                 mod_key,
                                 Trigger::WheelScrollLeft,
                                 mods,
-                            )
-                            .filter(|bind| {
-                                bind_usable_for_screenshot(
-                                    &bind.action,
-                                    self.niri.screenshot_ui.is_open(),
-                                )
-                            });
+                                self.niri.screenshot_ui.is_open(),
+                            );
                             let bind_right = find_configured_bind(
                                 bindings,
                                 mod_key,
                                 Trigger::WheelScrollRight,
                                 mods,
-                            )
-                            .filter(|bind| {
-                                bind_usable_for_screenshot(
-                                    &bind.action,
-                                    self.niri.screenshot_ui.is_open(),
-                                )
-                            });
+                                self.niri.screenshot_ui.is_open(),
+                            );
                             (bind_left, bind_right)
                         };
 
@@ -3641,21 +3774,15 @@ impl State {
                             mod_key,
                             Trigger::WheelScrollUp,
                             mods,
-                        )
-                        .filter(|bind| {
-                            bind_usable_for_screenshot(
-                                &bind.action,
-                                self.niri.screenshot_ui.is_open(),
-                            )
-                        });
-                        let bind_down =
-                            find_configured_bind(bindings, mod_key, Trigger::WheelScrollDown, mods)
-                                .filter(|bind| {
-                                    bind_usable_for_screenshot(
-                                        &bind.action,
-                                        self.niri.screenshot_ui.is_open(),
-                                    )
-                                });
+                            self.niri.screenshot_ui.is_open(),
+                        );
+                        let bind_down = find_configured_bind(
+                            bindings,
+                            mod_key,
+                            Trigger::WheelScrollDown,
+                            mods,
+                            self.niri.screenshot_ui.is_open(),
+                        );
                         (bind_up, bind_down)
                     };
 
@@ -3798,18 +3925,15 @@ impl State {
                         mod_key,
                         Trigger::TouchpadScrollLeft,
                         mods,
-                    )
-                    .filter(|bind| {
-                        bind_usable_for_screenshot(&bind.action, self.niri.screenshot_ui.is_open())
-                    });
-                    let bind_right =
-                        find_configured_bind(bindings, mod_key, Trigger::TouchpadScrollRight, mods)
-                            .filter(|bind| {
-                                bind_usable_for_screenshot(
-                                    &bind.action,
-                                    self.niri.screenshot_ui.is_open(),
-                                )
-                            });
+                        self.niri.screenshot_ui.is_open(),
+                    );
+                    let bind_right = find_configured_bind(
+                        bindings,
+                        mod_key,
+                        Trigger::TouchpadScrollRight,
+                        mods,
+                        self.niri.screenshot_ui.is_open(),
+                    );
                     drop(config);
 
                     if let Some(right) = bind_right {
@@ -3837,18 +3961,15 @@ impl State {
                         mod_key,
                         Trigger::TouchpadScrollUp,
                         mods,
-                    )
-                    .filter(|bind| {
-                        bind_usable_for_screenshot(&bind.action, self.niri.screenshot_ui.is_open())
-                    });
-                    let bind_down =
-                        find_configured_bind(bindings, mod_key, Trigger::TouchpadScrollDown, mods)
-                            .filter(|bind| {
-                                bind_usable_for_screenshot(
-                                    &bind.action,
-                                    self.niri.screenshot_ui.is_open(),
-                                )
-                            });
+                        self.niri.screenshot_ui.is_open(),
+                    );
+                    let bind_down = find_configured_bind(
+                        bindings,
+                        mod_key,
+                        Trigger::TouchpadScrollDown,
+                        mods,
+                        self.niri.screenshot_ui.is_open(),
+                    );
                     drop(config);
 
                     if let Some(down) = bind_down {
@@ -4174,8 +4295,14 @@ impl State {
             TabletToolTipState::Up => {
                 if let Some(capture) = self.niri.screenshot_ui.pointer_up(None) {
                     match capture {
-                        EditorOutcome::Save => self.confirm_screenshot(true),
-                        EditorOutcome::Copy => self.confirm_screenshot(false),
+                        EditorOutcome::Save => self.confirm_screenshot(ExportRequest::Save {
+                            path: None,
+                            format: None,
+                            quality: None,
+                        }),
+                        EditorOutcome::Copy => {
+                            self.confirm_screenshot(ExportRequest::ClipboardOnly)
+                        }
                         EditorOutcome::Changed => self.niri.queue_redraw_all(),
                     }
                 }
@@ -4281,6 +4408,12 @@ impl State {
             if event.button_state() == ButtonState::Released {
                 self.end_zoom_hold_for_trigger(ZoomHoldTrigger::TabletButton(button));
                 self.end_zoom_lock_hold_for_trigger(ZoomHoldTrigger::TabletButton(button));
+                if self.niri.screenshot_ui.is_open() {
+                    self.niri
+                        .screenshot_ui
+                        .set_axes_hold(HoldButton::Tablet(button), false);
+                    self.niri.queue_redraw_all();
+                }
             }
 
             if self.niri.suppressed_buttons.remove(&button) {
@@ -4300,18 +4433,21 @@ impl State {
                     let mods = self.niri.seat.get_keyboard().unwrap().modifier_state();
                     let modifiers = modifiers_from_state(mods);
 
-                    if self.niri.mods_with_tablet_stylus_binds.contains(&modifiers) {
+                    let screenshot_ui_open = self.niri.screenshot_ui.is_open();
+                    if screenshot_ui_open
+                        || self.niri.mods_with_tablet_stylus_binds.contains(&modifiers)
+                    {
                         let bind = {
                             let config = self.niri.config.borrow();
                             let bindings = config.binds.0.iter();
-                            find_configured_bind(bindings, mod_key, trigger, mods)
-                        }
-                        .filter(|bind| {
-                            bind_usable_for_screenshot(
-                                &bind.action,
-                                self.niri.screenshot_ui.is_open(),
+                            find_configured_bind(
+                                bindings,
+                                mod_key,
+                                trigger,
+                                mods,
+                                screenshot_ui_open,
                             )
-                        });
+                        };
                         if let Some(bind) = bind {
                             self.niri.suppressed_buttons.insert(button);
                             self.handle_bind(
@@ -5281,6 +5417,22 @@ impl State {
         }
     }
 
+    /// Closes the screenshot UI, restoring the default cursor.
+    ///
+    /// Closing drops the `Open` state, which also ends any active
+    /// selection-move hold owned by a pressed key.
+    fn close_screenshot_ui(&mut self) {
+        if !self.niri.screenshot_ui.is_open() {
+            return;
+        }
+
+        self.niri.screenshot_ui.close();
+        self.niri
+            .cursor_manager
+            .set_cursor_image(CursorImageStatus::default_named());
+        self.niri.queue_redraw_all();
+    }
+
     /// Whether a pinch begin with `fingers` fingers may be claimed for the
     /// desktop zoom.
     ///
@@ -5595,8 +5747,12 @@ impl State {
 
         if let Some(capture) = self.niri.screenshot_ui.pointer_up(Some(slot)) {
             match capture {
-                EditorOutcome::Save => self.confirm_screenshot(true),
-                EditorOutcome::Copy => self.confirm_screenshot(false),
+                EditorOutcome::Save => self.confirm_screenshot(ExportRequest::Save {
+                    path: None,
+                    format: None,
+                    quality: None,
+                }),
+                EditorOutcome::Copy => self.confirm_screenshot(ExportRequest::ClipboardOnly),
                 EditorOutcome::Changed => self.niri.queue_redraw_all(),
             }
         }
@@ -5793,13 +5949,26 @@ pub(crate) fn zoom_pinch_interrupted(interruption: ZoomPinchInterruption) -> boo
         || !interruption.zoom_gesturing
 }
 
+/// Whether `bind`'s action may run given the screenshot UI state.
+///
+/// Editor-local actions exist only while the UI is open: with it closed they
+/// are inert and must not swallow the client's input at all. While the UI is
+/// open, ordinary binds additionally have to be on the
+/// [`allowed_during_screenshot`] list since the user cannot see the screen.
+fn bind_usable_for_screenshot(action: &Action, screenshot_ui_open: bool) -> bool {
+    if action.is_screenshot_editor_local() {
+        return screenshot_ui_open;
+    }
+    !screenshot_ui_open || allowed_during_screenshot(action)
+}
+
 /// Check whether the key should be intercepted and mark intercepted
 /// pressed keys as `suppressed`, thus preventing `releases` corresponding
 /// to them from being delivered.
 #[allow(clippy::too_many_arguments)]
 fn should_intercept_key<'a>(
     suppressed_keys: &mut HashSet<Keycode>,
-    bindings: impl IntoIterator<Item = &'a Bind>,
+    bindings: impl IntoIterator<Item = &'a Bind, IntoIter = impl Iterator<Item = &'a Bind> + Clone>,
     mod_key: ModKey,
     key_code: Keycode,
     modified: Keysym,
@@ -5817,60 +5986,24 @@ fn should_intercept_key<'a>(
         return FilterResult::Forward;
     }
 
-    let mut final_bind = find_bind(
+    let final_bind = find_bind(
         bindings,
         mod_key,
         modified,
         raw,
         mods,
         disable_power_key_handling,
+        screenshot_ui.is_open(),
     );
-
-    // Editor-only binds are inert while the screenshot UI is closed: drop them
-    // so the press reaches clients (and so their release isn't suppressed).
-    if !screenshot_ui.is_open() {
-        if let Some(bind) = &final_bind {
-            if only_during_screenshot(&bind.action) {
-                final_bind = None;
-            }
-        }
-    }
-    // Allow only a subset of compositor actions while the screenshot UI is open, since the user
-    // cannot see the screen.
-    if screenshot_ui.is_open() {
-        let mut use_screenshot_ui_action = true;
-
-        if let Some(bind) = &final_bind {
-            if allowed_during_screenshot(&bind.action) {
-                use_screenshot_ui_action = false;
-            }
-        }
-
-        if use_screenshot_ui_action {
-            if let Some(raw) = raw {
-                final_bind = screenshot_ui.action(raw, mods).map(|action| Bind {
-                    key: Key {
-                        trigger: Trigger::Keysym(raw),
-                        // Not entirely correct but it doesn't matter in how we currently use it.
-                        modifiers: Modifiers::empty(),
-                    },
-                    action,
-                    repeat: true,
-                    cooldown: None,
-                    allow_when_locked: false,
-                    // The screenshot UI owns the focus anyway, so this doesn't really matter.
-                    // But logically, nothing can inhibit its actions. Only opening it can be
-                    // inhibited.
-                    allow_inhibiting: false,
-                    hotkey_overlay_title: None,
-                });
-            }
-        }
-    }
 
     match (final_bind, pressed) {
         (Some(bind), true) => {
-            if is_inhibiting_shortcuts && bind.allow_inhibiting {
+            // Editor-local binds are never inhibited: while the UI is open it
+            // owns keyboard focus, so nothing can inhibit its own keys.
+            if is_inhibiting_shortcuts
+                && bind.allow_inhibiting
+                && !bind.action.is_screenshot_editor_local()
+            {
                 FilterResult::Forward
             } else {
                 suppressed_keys.insert(key_code);
@@ -5891,12 +6024,13 @@ fn should_intercept_key<'a>(
 }
 
 fn find_bind<'a>(
-    bindings: impl IntoIterator<Item = &'a Bind>,
+    bindings: impl IntoIterator<Item = &'a Bind, IntoIter = impl Iterator<Item = &'a Bind> + Clone>,
     mod_key: ModKey,
     modified: Keysym,
     raw: Option<Keysym>,
     mods: ModifiersState,
     disable_power_key_handling: bool,
+    screenshot_ui_open: bool,
 ) -> Option<Bind> {
     use keysyms::*;
 
@@ -5933,26 +6067,38 @@ fn find_bind<'a>(
     }
 
     let trigger = Trigger::Keysym(raw?);
-    find_configured_bind(bindings, mod_key, trigger, mods)
+    find_configured_bind(bindings, mod_key, trigger, mods, screenshot_ui_open)
 }
 
 fn find_configured_bind<'a>(
-    bindings: impl IntoIterator<Item = &'a Bind>,
+    bindings: impl IntoIterator<Item = &'a Bind, IntoIter = impl Iterator<Item = &'a Bind> + Clone>,
     mod_key: ModKey,
     trigger: Trigger,
     mods: ModifiersState,
+    screenshot_ui_open: bool,
 ) -> Option<Bind> {
     // Handle configured binds.
-    let mut modifiers = modifiers_from_state(mods);
+    let modifiers = modifiers_from_state(mods);
 
-    let mod_down = modifiers_from_state(mods).contains(mod_key.to_modifiers());
-    if mod_down {
-        modifiers |= Modifiers::COMPOSITOR;
-    }
-
-    for bind in bindings {
+    let matches = |bind: &&'a Bind| {
         if bind.key.trigger != trigger {
-            continue;
+            return false;
+        }
+
+        let mut modifiers = modifiers;
+        // A bare modifier can hold the axes without changing how ordinary
+        // binds or explicitly modified triggers are matched.
+        if matches!(bind.action, Action::ScreenshotToggleAxes(true)) {
+            if let Trigger::Keysym(keysym) = trigger {
+                if let Some(bit) = modifier_of_keysym(keysym) {
+                    if !bind.key.modifiers.contains(bit) {
+                        modifiers.remove(bit);
+                    }
+                }
+            }
+        }
+        if modifiers.contains(mod_key.to_modifiers()) {
+            modifiers |= Modifiers::COMPOSITOR;
         }
 
         let mut bind_modifiers = bind.key.modifiers;
@@ -5961,13 +6107,25 @@ fn find_configured_bind<'a>(
         } else if bind_modifiers.contains(mod_key.to_modifiers()) {
             bind_modifiers |= Modifiers::COMPOSITOR;
         }
+        bind_modifiers == modifiers
+    };
 
-        if bind_modifiers == modifiers {
+    let mut bindings = bindings.into_iter();
+
+    // While the screenshot UI is open, editor-local binds take priority over
+    // ordinary binds on the same trigger.
+    if screenshot_ui_open {
+        if let Some(bind) = bindings
+            .clone()
+            .find(|bind| matches(bind) && bind.action.is_screenshot_editor_local())
+        {
             return Some(bind.clone());
         }
     }
 
-    None
+    bindings
+        .find(|bind| matches(bind) && bind_usable_for_screenshot(&bind.action, screenshot_ui_open))
+        .cloned()
 }
 
 fn find_configured_switch_action(
@@ -5985,6 +6143,24 @@ fn find_configured_switch_action(
     switch_action
         .as_ref()
         .map(|switch_action| Action::Spawn(switch_action.spawn.clone()))
+}
+
+/// Modifier contributed by a held trigger key.
+fn modifier_of_keysym(keysym: Keysym) -> Option<Modifiers> {
+    Some(match keysym {
+        Keysym::Shift_L | Keysym::Shift_R => Modifiers::SHIFT,
+        Keysym::Control_L | Keysym::Control_R => Modifiers::CTRL,
+        Keysym::Alt_L | Keysym::Alt_R => Modifiers::ALT,
+        Keysym::Super_L
+        | Keysym::Super_R
+        | Keysym::Meta_L
+        | Keysym::Meta_R
+        | Keysym::Hyper_L
+        | Keysym::Hyper_R => Modifiers::SUPER,
+        Keysym::ISO_Level3_Shift => Modifiers::ISO_LEVEL3_SHIFT,
+        Keysym::ISO_Level5_Shift => Modifiers::ISO_LEVEL5_SHIFT,
+        _ => return None,
+    })
 }
 
 fn modifiers_from_state(mods: ModifiersState) -> Modifiers {
@@ -6131,36 +6307,7 @@ fn allowed_during_screenshot(action: &Action) -> bool {
             | Action::SetWindowWidth(_)
             | Action::SetWindowHeight(_)
             | Action::SetColumnWidth(_)
-            // Editor-only actions handled by the screenshot UI itself. They only
-            // apply while the UI is open: `bind_usable_for_screenshot` keeps
-            // them from being intercepted and swallowed when it is closed.
-            | Action::ScreenshotUndo
-            | Action::ScreenshotRedo
     )
-}
-
-/// Actions that exist only while the screenshot UI is open.
-///
-/// Unlike [`allowed_during_screenshot`], which decides whether a bind may run
-/// while the UI is open, this marks binds that must not be intercepted at all
-/// when the UI is closed: a `screenshot-undo` bind on Ctrl+Z must not swallow a
-/// client's own Ctrl+Z presses.
-fn only_during_screenshot(action: &Action) -> bool {
-    matches!(action, Action::ScreenshotUndo | Action::ScreenshotRedo)
-}
-
-/// Whether a bind for `action` may be triggered given the screenshot UI state.
-///
-/// While the screenshot UI is open, only [`allowed_during_screenshot`] actions
-/// can run; other keys are remapped to the UI's own bindings. While it is
-/// closed, editor-only actions are inert and their keys pass through to
-/// clients untouched.
-fn bind_usable_for_screenshot(action: &Action, screenshot_ui_open: bool) -> bool {
-    if screenshot_ui_open {
-        allowed_during_screenshot(action)
-    } else {
-        !only_during_screenshot(action)
-    }
 }
 
 fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
@@ -6495,6 +6642,12 @@ pub fn mods_with_binds(mod_key: ModKey, binds: &Binds, triggers: &[Trigger]) -> 
             continue;
         }
 
+        // Editor-local binds are inert while the screenshot UI is closed; they
+        // must not make us claim the input from clients.
+        if bind.action.is_screenshot_editor_local() {
+            continue;
+        }
+
         let mut mods = bind.key.modifiers;
         if mods.contains(Modifiers::COMPOSITOR) {
             mods.remove(Modifiers::COMPOSITOR);
@@ -6619,7 +6772,7 @@ mod tests {
     use super::*;
     use crate::animation::{Animation, Clock};
     use crate::ui::screenshot_editor::Editor;
-    use crate::ui::screenshot_ui::Button;
+    use crate::ui::screenshot_ui::Interaction;
 
     #[test]
     fn bindings_suppress_keys() {
@@ -6880,7 +7033,8 @@ mod tests {
                 ModifiersState {
                     logo: true,
                     ..Default::default()
-                }
+                },
+                false,
             )
             .as_ref(),
             Some(&bindings.0[0])
@@ -6891,6 +7045,7 @@ mod tests {
                 ModKey::Super,
                 Trigger::Keysym(Keysym::q),
                 ModifiersState::default(),
+                false,
             ),
             None,
         );
@@ -6903,7 +7058,8 @@ mod tests {
                 ModifiersState {
                     logo: true,
                     ..Default::default()
-                }
+                },
+                false,
             )
             .as_ref(),
             Some(&bindings.0[1])
@@ -6914,6 +7070,7 @@ mod tests {
                 ModKey::Super,
                 Trigger::Keysym(Keysym::h),
                 ModifiersState::default(),
+                false,
             ),
             None,
         );
@@ -6926,7 +7083,8 @@ mod tests {
                 ModifiersState {
                     logo: true,
                     ..Default::default()
-                }
+                },
+                false,
             ),
             None,
         );
@@ -6936,6 +7094,7 @@ mod tests {
                 ModKey::Super,
                 Trigger::Keysym(Keysym::j),
                 ModifiersState::default(),
+                false,
             )
             .as_ref(),
             Some(&bindings.0[2])
@@ -6949,7 +7108,8 @@ mod tests {
                 ModifiersState {
                     logo: true,
                     ..Default::default()
-                }
+                },
+                false,
             )
             .as_ref(),
             Some(&bindings.0[3])
@@ -6960,6 +7120,7 @@ mod tests {
                 ModKey::Super,
                 Trigger::Keysym(Keysym::k),
                 ModifiersState::default(),
+                false,
             ),
             None,
         );
@@ -6973,7 +7134,8 @@ mod tests {
                     logo: true,
                     alt: true,
                     ..Default::default()
-                }
+                },
+                false,
             )
             .as_ref(),
             Some(&bindings.0[4])
@@ -6987,6 +7149,7 @@ mod tests {
                     logo: true,
                     ..Default::default()
                 },
+                false,
             ),
             None,
         );
@@ -7042,15 +7205,18 @@ mod tests {
         let animation = config.borrow().animations.screenshot_ui_open.0;
         ScreenshotUi::Open {
             selection: (output, Point::from((0, 0)), Point::from((1919, 1079))),
-            selection_before: None,
             output_data: HashMap::new(),
-            button: Button::Up,
+            interaction: Interaction::Idle,
             editor: Editor::default(),
             show_pointer: true,
             open_anim: Animation::new(clock.clone(), 0., 1., 0., animation),
             clock,
             config,
             path: None,
+            pending_config: false,
+            mod_key: ModKey::Super,
+            hold_key: None,
+            axes: Default::default(),
         }
     }
 
@@ -7099,14 +7265,14 @@ mod tests {
             ctrl: true,
             ..Default::default()
         };
-        let ctrl_shift = ModifiersState {
+        let ctrl_alt = ModifiersState {
             ctrl: true,
-            shift: true,
+            alt: true,
             ..Default::default()
         };
         let mut suppressed_keys = HashSet::new();
 
-        // Editor-only binds are inert while the screenshot UI is closed: the
+        // Editor-local binds are inert while the screenshot UI is closed: the
         // press reaches the focused client and the release is not suppressed.
         let closed_ui = ScreenshotUi::new(Clock::default(), Default::default());
         let editor_binds = [
@@ -7187,8 +7353,7 @@ mod tests {
         assert!(matches!(filter, FilterResult::Intercept(None)));
         assert!(suppressed_keys.is_empty());
 
-        // Remapping: Ctrl+Z bound to redo wins over the hardcoded Ctrl+Z
-        // fallback.
+        // Remapping: Ctrl+Z bound to redo is what the editor sees.
         let remap_binds = [bind(Keysym::z, Modifiers::CTRL, Action::ScreenshotRedo)];
         let filter = intercept_key(
             &mut suppressed_keys,
@@ -7207,12 +7372,15 @@ mod tests {
         ));
         suppressed_keys.clear();
 
-        // Fallback keys with no configured bind produce repeating binds.
-        let no_binds: Vec<Bind> = Vec::new();
-
+        // Local binds take priority over ordinary binds on the same trigger
+        // while the UI is open.
+        let same_trigger = [
+            bind(Keysym::z, Modifiers::CTRL, Action::CloseWindow),
+            bind(Keysym::z, Modifiers::CTRL, Action::ScreenshotUndo),
+        ];
         let filter = intercept_key(
             &mut suppressed_keys,
-            &no_binds,
+            &same_trigger,
             &open_ui,
             Keysym::z,
             ctrl,
@@ -7222,56 +7390,13 @@ mod tests {
             filter,
             FilterResult::Intercept(Some(Bind {
                 action: Action::ScreenshotUndo,
-                repeat: true,
-                ..
-            }))
-        ));
-        let filter = intercept_key(
-            &mut suppressed_keys,
-            &no_binds,
-            &open_ui,
-            Keysym::z,
-            ctrl,
-            false,
-        );
-        assert!(matches!(filter, FilterResult::Intercept(None)));
-        assert!(suppressed_keys.is_empty());
-
-        let filter = intercept_key(
-            &mut suppressed_keys,
-            &no_binds,
-            &open_ui,
-            Keysym::z,
-            ctrl_shift,
-            true,
-        );
-        assert!(matches!(
-            filter,
-            FilterResult::Intercept(Some(Bind {
-                action: Action::ScreenshotRedo,
                 ..
             }))
         ));
         suppressed_keys.clear();
 
-        let filter = intercept_key(
-            &mut suppressed_keys,
-            &no_binds,
-            &open_ui,
-            Keysym::y,
-            ctrl,
-            true,
-        );
-        assert!(matches!(
-            filter,
-            FilterResult::Intercept(Some(Bind {
-                action: Action::ScreenshotRedo,
-                ..
-            }))
-        ));
-        suppressed_keys.clear();
-
-        // A disallowed configured action loses to the UI fallback.
+        // Ordinary binds not allowed during screenshot don't run while the
+        // UI is open, and nothing falls back to hardcoded editor keys.
         let close_binds = [bind(Keysym::z, Modifiers::CTRL, Action::CloseWindow)];
         let filter = intercept_key(
             &mut suppressed_keys,
@@ -7281,28 +7406,42 @@ mod tests {
             ctrl,
             true,
         );
+        assert!(matches!(filter, FilterResult::Forward));
+        assert!(suppressed_keys.is_empty());
+
+        // Compositor actions on the allow list still work while the UI is
+        // open.
+        let volume_binds = [bind(
+            Keysym::z,
+            Modifiers::CTRL,
+            Action::Spawn(vec!["volume".into()]),
+        )];
+        let filter = intercept_key(
+            &mut suppressed_keys,
+            &volume_binds,
+            &open_ui,
+            Keysym::z,
+            ctrl,
+            true,
+        );
         assert!(matches!(
             filter,
             FilterResult::Intercept(Some(Bind {
-                action: Action::ScreenshotUndo,
+                action: Action::Spawn(_),
                 ..
             }))
         ));
         suppressed_keys.clear();
 
-        // Keys the editor doesn't handle are left alone.
+        // Keys without any bind are left alone; there is no hidden editor
+        // fallback.
         let no_binds: Vec<Bind> = Vec::new();
-        let ctrl_alt = ModifiersState {
-            ctrl: true,
-            alt: true,
-            ..Default::default()
-        };
         let filter = intercept_key(
             &mut suppressed_keys,
             &no_binds,
             &open_ui,
             Keysym::z,
-            ctrl_alt,
+            ctrl,
             true,
         );
         assert!(matches!(filter, FilterResult::Forward));
@@ -7311,8 +7450,8 @@ mod tests {
             &mut suppressed_keys,
             &no_binds,
             &open_ui,
-            Keysym::x,
-            ctrl,
+            Keysym::z,
+            ctrl_alt,
             true,
         );
         assert!(matches!(filter, FilterResult::Forward));
@@ -7326,7 +7465,15 @@ mod tests {
             ctrl: true,
             ..Default::default()
         };
-        let press = intercept_key(&mut suppressed, &[], &screenshot_ui, Keysym::z, ctrl, true);
+        let binds = [bind(Keysym::z, Modifiers::CTRL, Action::ScreenshotUndo)];
+        let press = intercept_key(
+            &mut suppressed,
+            &binds,
+            &screenshot_ui,
+            Keysym::z,
+            ctrl,
+            true,
+        );
         assert!(matches!(
             press,
             FilterResult::Intercept(Some(Bind {
@@ -7335,13 +7482,120 @@ mod tests {
             }))
         ));
         screenshot_ui.close();
-        let release = intercept_key(&mut suppressed, &[], &screenshot_ui, Keysym::z, ctrl, false);
+        let release = intercept_key(
+            &mut suppressed,
+            &binds,
+            &screenshot_ui,
+            Keysym::z,
+            ctrl,
+            false,
+        );
         assert!(matches!(release, FilterResult::Intercept(None)));
         assert!(suppressed.is_empty());
         // The next application key sequence must not inherit the editor's grab.
-        let press = intercept_key(&mut suppressed, &[], &screenshot_ui, Keysym::z, ctrl, true);
+        let press = intercept_key(
+            &mut suppressed,
+            &binds,
+            &screenshot_ui,
+            Keysym::z,
+            ctrl,
+            true,
+        );
         assert!(matches!(press, FilterResult::Forward));
-        let release = intercept_key(&mut suppressed, &[], &screenshot_ui, Keysym::z, ctrl, false);
+        let release = intercept_key(
+            &mut suppressed,
+            &binds,
+            &screenshot_ui,
+            Keysym::z,
+            ctrl,
+            false,
+        );
         assert!(matches!(release, FilterResult::Forward));
+    }
+    #[test]
+    fn modifier_key_as_trigger_matches_own_press() {
+        // A bare `Shift_L` bind: by the time the press is filtered, XKB has
+        // already depressed Shift, so the trigger's own bit must not defeat
+        // the match. The release is suppressed like any bound key.
+        let mut suppressed_keys = HashSet::new();
+        let shift = ModifiersState {
+            shift: true,
+            ..Default::default()
+        };
+        let ui = open_screenshot_ui();
+        let binds = [bind(
+            Keysym::Shift_L,
+            Modifiers::empty(),
+            Action::ScreenshotToggleAxes(true),
+        )];
+
+        let press = intercept_key(
+            &mut suppressed_keys,
+            &binds,
+            &ui,
+            Keysym::Shift_L,
+            shift,
+            true,
+        );
+        assert!(matches!(
+            press,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::ScreenshotToggleAxes(true),
+                ..
+            }))
+        ));
+        assert!(suppressed_keys.contains(&Keycode::from(Keysym::Shift_L.raw() + 8)));
+
+        // Releasing the key after other modifiers are up still suppresses.
+        let release = intercept_key(
+            &mut suppressed_keys,
+            &binds,
+            &ui,
+            Keysym::Shift_L,
+            ModifiersState::default(),
+            false,
+        );
+        assert!(matches!(release, FilterResult::Intercept(None)));
+        assert!(suppressed_keys.is_empty());
+
+        // Ordinary modifier-trigger binds retain their existing matching.
+        let combo = [bind(
+            Keysym::Shift_L,
+            Modifiers::SHIFT,
+            Action::ScreenshotUndo,
+        )];
+        let press = intercept_key(
+            &mut suppressed_keys,
+            &combo,
+            &ui,
+            Keysym::Shift_L,
+            shift,
+            true,
+        );
+        assert!(matches!(
+            press,
+            FilterResult::Intercept(Some(Bind {
+                action: Action::ScreenshotUndo,
+                ..
+            }))
+        ));
+        suppressed_keys.clear();
+
+        // And the bare bind does not fire with extra modifiers held.
+        let shift_ctrl = ModifiersState {
+            shift: true,
+            ctrl: true,
+            ..Default::default()
+        };
+        let press = intercept_key(
+            &mut suppressed_keys,
+            &binds,
+            &ui,
+            Keysym::Shift_L,
+            shift_ctrl,
+            true,
+        );
+        assert!(matches!(press, FilterResult::Forward));
+        suppressed_keys.clear();
     }
 }

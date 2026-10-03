@@ -139,7 +139,7 @@ fn region_frame_fixed_across_zoom_overview_workspace_and_excluded_from_capture()
         expected
     );
     // The screenshot UI samples Output textures, not ScreenCapture textures.
-    f.niri_state().open_screenshot_ui(false, None);
+    f.niri_state().open_screenshot_ui(false, None, niri_ipc::ScreenshotTool::Select);
     let state = f.niri_state();
     let (_, screenshot) = state
         .backend

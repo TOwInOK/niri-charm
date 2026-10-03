@@ -743,7 +743,7 @@ fn zoom_debug_hidden_by_screenshot_ui() {
     let mut f = set_up_debug();
     let output = f.niri_output(1);
 
-    f.niri_state().open_screenshot_ui(true, None);
+    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
     assert!(f.niri().screenshot_ui.is_open());
 
     let elements = render_elements(f.niri_state(), &output, RenderTarget::Output);
@@ -3032,7 +3032,7 @@ fn zoom_hold_release_not_gated_by_screenshot_ui() {
 
     // Open the screenshot UI during the hold; the release is a cleanup path,
     // not a new action, so it must not be blocked by the UI allow-list.
-    f.niri_state().open_screenshot_ui(true, None);
+    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
     assert!(f.niri().screenshot_ui.is_open());
 
     hold_release(&mut f, trigger);
@@ -4992,7 +4992,7 @@ fn zoom_anim_hold_screenshot_ui_release() {
 
     // The release is a cleanup path, not a new action: the screenshot UI
     // allow-list must not block the animated restore.
-    f.niri_state().open_screenshot_ui(true, None);
+    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
     assert!(f.niri().screenshot_ui.is_open());
 
     hold_release(&mut f, trigger);
@@ -6067,7 +6067,7 @@ fn zoom_screenshot_ui_pointer_down_uses_displayed_coordinates() {
         [0xff, 0, 0, 0xff],
     );
     set_zoom(&mut f, &output, 2., Point::from((100., 100.)));
-    f.niri_state().open_screenshot_ui(true, None);
+    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
 
     let canonical = Point::from((150., 100.));
     let displayed = f.niri().display_position_for_content(canonical);
@@ -6930,7 +6930,7 @@ fn zoom_pinch_claim_gates() {
 #[test]
 fn zoom_pinch_claim_blocked_by_screenshot_ui() {
     let mut f = set_up_with_pinch();
-    f.niri_state().open_screenshot_ui(true, None);
+    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
     assert!(f.niri().screenshot_ui.is_open());
 
     assert!(!f.niri_state().can_claim_zoom_pinch(3));

@@ -7,7 +7,9 @@ use bitflags::bitflags;
 use knuffel::errors::DecodeError;
 use miette::miette;
 use niri_ipc::{
-    ColumnDisplay, LayoutSwitchTarget, PositionChange, SizeChange, WorkspaceReferenceArg,
+    ColumnDisplay, LayoutSwitchTarget, PositionChange, ScreenshotColor, ScreenshotFormat,
+    ScreenshotTool, ScreenshotValueChange, SizeChange, WorkspaceReferenceArg,
+    MAX_SCREENSHOT_BRUSH_WIDTH, MIN_SCREENSHOT_BRUSH_WIDTH,
 };
 use smithay::input::keyboard::keysyms::KEY_NoSymbol;
 use smithay::input::keyboard::xkb::{keysym_from_name, KEYSYM_CASE_INSENSITIVE, KEYSYM_NO_FLAGS};
@@ -115,21 +117,89 @@ pub enum Action {
     Spawn(#[knuffel(arguments)] Vec<String>),
     SpawnSh(#[knuffel(argument)] String),
     DoScreenTransition(#[knuffel(property(name = "delay-ms"))] Option<u16>),
+    // Opening the editor is not editor-local: it works while the UI is closed.
+    //
+    // `knuffel` cannot derive named-field variants, so this (and the other payload
+    // screenshot actions below) are decoded manually in `decode_screenshot_action`.
+    #[knuffel(skip)]
+    Screenshot {
+        show_pointer: bool,
+        // Path; not settable from knuffel.
+        path: Option<String>,
+        tool: ScreenshotTool,
+    },
+    #[knuffel(skip)]
+    ScreenshotTool {
+        tool: ScreenshotTool,
+    },
+    ScreenshotTogglePalette,
+    #[knuffel(skip)]
+    ScreenshotSetPalette {
+        open: bool,
+    },
+    #[knuffel(skip)]
+    ScreenshotPaletteColor {
+        index: u8,
+    },
+    #[knuffel(skip)]
+    ScreenshotBrushColor {
+        color: ScreenshotColor,
+    },
+    /// Adjusts the keyboard-focused control, falling back to pointer context:
+    /// draw/arrow/rectangle width, blur strength, or magnifier zoom over canvas.
+    /// Other controls and Select are a no-op. Mouse movement clears keyboard focus.
+    #[knuffel(skip)]
+    ScreenshotContext {
+        change: ScreenshotValueChange,
+    },
+    #[knuffel(skip)]
+    ScreenshotArrowColor {
+        color: ScreenshotColor,
+    },
+    #[knuffel(skip)]
+    ScreenshotRectangleColor {
+        color: ScreenshotColor,
+    },
+    ScreenshotUndo,
+    ScreenshotRedo,
+    ScreenshotTogglePointer,
+    #[knuffel(skip)]
+    ScreenshotSetPointer {
+        show_pointer: bool,
+    },
+    ScreenshotToggleAxes(#[knuffel(property(name = "hold"), default)] bool),
+    #[knuffel(skip)]
+    ScreenshotSetAxes {
+        enabled: bool,
+    },
+    #[knuffel(skip)]
+    ScreenshotMoveSelection {
+        x: i32,
+        y: i32,
+    },
+    #[knuffel(skip)]
+    ScreenshotResizeSelection {
+        width: i32,
+        height: i32,
+    },
+    // Bound to a physical key; there is no matching IPC variant because IPC has no
+    // paired key release.
+    ScreenshotMoveSelectionHold,
+    #[knuffel(skip)]
+    ScreenshotMagnifierZoom {
+        zoom: ScreenshotValueChange,
+    },
+    ScreenshotFocusNext,
+    ScreenshotFocusPrevious,
+    ScreenshotConfirm,
+    ScreenshotCancel,
     #[knuffel(skip)]
     ConfirmScreenshot {
         write_to_disk: bool,
+        format: Option<ScreenshotFormat>,
+        quality: Option<f32>,
     },
-    #[knuffel(skip)]
     CancelScreenshot,
-    ScreenshotUndo,
-    ScreenshotRedo,
-    #[knuffel(skip)]
-    ScreenshotTogglePointer,
-    Screenshot(
-        #[knuffel(property(name = "show-pointer"), default = true)] bool,
-        // Path; not settable from knuffel
-        Option<String>,
-    ),
     ScreenshotScreen(
         #[knuffel(property(name = "write-to-disk"), default = true)] bool,
         #[knuffel(property(name = "show-pointer"), default = true)] bool,
@@ -479,9 +549,15 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::Spawn { command } => Self::Spawn(command),
             niri_ipc::Action::SpawnSh { command } => Self::SpawnSh(command),
             niri_ipc::Action::DoScreenTransition { delay_ms } => Self::DoScreenTransition(delay_ms),
-            niri_ipc::Action::Screenshot { show_pointer, path } => {
-                Self::Screenshot(show_pointer, path)
-            }
+            niri_ipc::Action::Screenshot {
+                show_pointer,
+                path,
+                tool,
+            } => Self::Screenshot {
+                show_pointer,
+                path,
+                tool,
+            },
             niri_ipc::Action::ScreenshotScreen {
                 write_to_disk,
                 show_pointer,
@@ -504,8 +580,55 @@ impl From<niri_ipc::Action> for Action {
                 show_pointer,
                 path,
             },
+            niri_ipc::Action::ScreenshotTool { tool } => Self::ScreenshotTool { tool },
+            niri_ipc::Action::ScreenshotTogglePalette {} => Self::ScreenshotTogglePalette,
+            niri_ipc::Action::ScreenshotSetPalette { open } => Self::ScreenshotSetPalette { open },
+            niri_ipc::Action::ScreenshotPaletteColor { index } => {
+                Self::ScreenshotPaletteColor { index }
+            }
+            niri_ipc::Action::ScreenshotBrushColor { color } => {
+                Self::ScreenshotBrushColor { color }
+            }
+            niri_ipc::Action::ScreenshotContext { change } => Self::ScreenshotContext { change },
+            niri_ipc::Action::ScreenshotArrowColor { color } => {
+                Self::ScreenshotArrowColor { color }
+            }
+            niri_ipc::Action::ScreenshotRectangleColor { color } => {
+                Self::ScreenshotRectangleColor { color }
+            }
             niri_ipc::Action::ScreenshotUndo {} => Self::ScreenshotUndo,
             niri_ipc::Action::ScreenshotRedo {} => Self::ScreenshotRedo,
+            niri_ipc::Action::ScreenshotTogglePointer {} => Self::ScreenshotTogglePointer,
+            niri_ipc::Action::ScreenshotSetPointer { show_pointer } => {
+                Self::ScreenshotSetPointer { show_pointer }
+            }
+            niri_ipc::Action::ScreenshotToggleAxes {} => Self::ScreenshotToggleAxes(false),
+            niri_ipc::Action::ScreenshotSetAxes { enabled } => {
+                Self::ScreenshotSetAxes { enabled }
+            }
+            niri_ipc::Action::ScreenshotMoveSelection { x, y } => {
+                Self::ScreenshotMoveSelection { x, y }
+            }
+            niri_ipc::Action::ScreenshotResizeSelection { width, height } => {
+                Self::ScreenshotResizeSelection { width, height }
+            }
+            niri_ipc::Action::ScreenshotMagnifierZoom { zoom } => {
+                Self::ScreenshotMagnifierZoom { zoom }
+            }
+            niri_ipc::Action::ScreenshotFocusNext {} => Self::ScreenshotFocusNext,
+            niri_ipc::Action::ScreenshotFocusPrevious {} => Self::ScreenshotFocusPrevious,
+            niri_ipc::Action::ScreenshotConfirm {} => Self::ScreenshotConfirm,
+            niri_ipc::Action::ScreenshotCancel {} => Self::ScreenshotCancel,
+            niri_ipc::Action::ConfirmScreenshot {
+                write_to_disk,
+                format,
+                quality,
+            } => Self::ConfirmScreenshot {
+                write_to_disk,
+                format,
+                quality,
+            },
+            niri_ipc::Action::CancelScreenshot {} => Self::CancelScreenshot,
             niri_ipc::Action::ToggleKeyboardShortcutsInhibit {} => {
                 Self::ToggleKeyboardShortcutsInhibit
             }
@@ -793,6 +916,473 @@ impl From<niri_ipc::Action> for Action {
     }
 }
 
+impl Action {
+    /// Whether the action only makes sense while the screenshot editor is open.
+    ///
+    /// Editor-local actions form their own keybind category: they are excluded from bind
+    /// matching while the UI is closed (so they don't swallow client key presses) and take
+    /// priority over ordinary binds while it is open. `Binds` decoding allows the same
+    /// `Key` once in each category, but rejects duplicates within one category.
+    ///
+    /// The opening `screenshot` action is ordinary: it must work while the UI is closed.
+    pub fn is_screenshot_editor_local(&self) -> bool {
+        matches!(
+            self,
+            Self::ScreenshotTool { .. }
+                | Self::ScreenshotTogglePalette
+                | Self::ScreenshotSetPalette { .. }
+                | Self::ScreenshotPaletteColor { .. }
+                | Self::ScreenshotBrushColor { .. }
+                | Self::ScreenshotContext { .. }
+                | Self::ScreenshotArrowColor { .. }
+                | Self::ScreenshotRectangleColor { .. }
+                | Self::ScreenshotUndo
+                | Self::ScreenshotRedo
+                | Self::ScreenshotTogglePointer
+                | Self::ScreenshotSetPointer { .. }
+                | Self::ScreenshotToggleAxes(_)
+                | Self::ScreenshotSetAxes { .. }
+                | Self::ScreenshotMoveSelection { .. }
+                | Self::ScreenshotResizeSelection { .. }
+                | Self::ScreenshotMoveSelectionHold
+                | Self::ScreenshotMagnifierZoom { .. }
+                | Self::ScreenshotFocusNext
+                | Self::ScreenshotFocusPrevious
+                | Self::ScreenshotConfirm
+                | Self::ScreenshotCancel
+                | Self::ConfirmScreenshot { .. }
+                | Self::CancelScreenshot
+        )
+    }
+}
+/// Decodes a screenshot action node whose payload needs named arguments.
+///
+/// `knuffel`'s derive cannot decode enum variants with named fields, so the payload
+/// screenshot actions are `#[knuffel(skip)]` on [`Action`] and decoded here by hand.
+/// Returns `None` for node names this doesn't handle so the caller falls back to the
+/// derived decode.
+fn decode_screenshot_action<S: knuffel::traits::ErrorSpan>(
+    node: &knuffel::ast::SpannedNode<S>,
+    ctx: &mut knuffel::decode::Context<S>,
+) -> Option<Result<Action, DecodeError<S>>> {
+    let name = &**node.node_name;
+    if !matches!(
+        name,
+        "screenshot"
+            | "screenshot-tool"
+            | "screenshot-set-palette"
+            | "screenshot-palette-color"
+            | "screenshot-brush-color"
+            | "screenshot-context"
+            | "screenshot-arrow-color"
+            | "screenshot-rectangle-color"
+            | "screenshot-set-pointer"
+            | "screenshot-set-axes"
+            | "screenshot-move-selection"
+            | "screenshot-resize-selection"
+            | "screenshot-magnifier-zoom"
+            | "confirm-screenshot"
+    ) {
+        return None;
+    }
+
+    Some(decode_screenshot_action_inner(name, node, ctx))
+}
+
+fn decode_screenshot_action_inner<S: knuffel::traits::ErrorSpan>(
+    name: &str,
+    node: &knuffel::ast::SpannedNode<S>,
+    ctx: &mut knuffel::decode::Context<S>,
+) -> Result<Action, DecodeError<S>> {
+    if let Some(type_name) = &node.type_name {
+        ctx.emit_error(DecodeError::unexpected(
+            type_name,
+            "type name",
+            "no type name expected for this node",
+        ));
+    }
+    for child in node.children() {
+        ctx.emit_error(DecodeError::unexpected(
+            child,
+            "node",
+            format!("unexpected node `{}`", child.node_name.escape_default()),
+        ));
+    }
+
+    /// Reads one optional property and reports any property that wasn't claimed.
+    struct Props<'a, S> {
+        node: &'a knuffel::ast::SpannedNode<S>,
+        claimed: std::collections::HashSet<&'a str>,
+    }
+
+    impl<'a, S: knuffel::traits::ErrorSpan> Props<'a, S> {
+        fn new(node: &'a knuffel::ast::SpannedNode<S>) -> Self {
+            Self {
+                node,
+                claimed: Default::default(),
+            }
+        }
+
+        fn get(&mut self, name: &'a str) -> Option<&'a knuffel::ast::Value<S>> {
+            let entry = self
+                .node
+                .properties
+                .iter()
+                .find(|(key, _)| &****key == name)?;
+            self.claimed.insert(name);
+            Some(entry.1)
+        }
+
+        fn finish(self, ctx: &mut knuffel::decode::Context<S>) {
+            for name in self.node.properties.keys() {
+                if !self.claimed.contains(&***name) {
+                    ctx.emit_error(DecodeError::unexpected(
+                        name,
+                        "property",
+                        format!("unexpected property `{}`", name.escape_default()),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Decodes a property value through `DecodeScalar`, or returns `default` when absent.
+    fn prop_or<S: knuffel::traits::ErrorSpan, T: knuffel::traits::DecodeScalar<S>>(
+        props: &mut Props<S>,
+        name: &'static str,
+        default: T,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> T {
+        match props.get(name) {
+            Some(val) => match knuffel::traits::DecodeScalar::decode(val, ctx) {
+                Ok(v) => v,
+                Err(e) => {
+                    ctx.emit_error(e);
+                    default
+                }
+            },
+            None => default,
+        }
+    }
+
+    /// Decodes a property string value through `FromStr`, or returns `default` when absent.
+    fn str_prop_or<S, T>(
+        props: &mut Props<S>,
+        name: &'static str,
+        default: T,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> T
+    where
+        S: knuffel::traits::ErrorSpan,
+        T: FromStr,
+        T::Err: Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    {
+        match props.get(name) {
+            Some(val) => {
+                let s: String = match knuffel::traits::DecodeScalar::decode(val, ctx) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        ctx.emit_error(e);
+                        return default;
+                    }
+                };
+                match s.parse() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        ctx.emit_error(DecodeError::conversion(&val.literal, e));
+                        default
+                    }
+                }
+            }
+            None => default,
+        }
+    }
+
+    /// Decodes an optional property string value through `FromStr`, `None` when absent.
+    fn opt_str_prop<S, T>(
+        props: &mut Props<S>,
+        name: &'static str,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> Option<T>
+    where
+        S: knuffel::traits::ErrorSpan,
+        T: FromStr,
+        T::Err: Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    {
+        let val = props.get(name)?;
+        let s: String = match knuffel::traits::DecodeScalar::decode(val, ctx) {
+            Ok(s) => s,
+            Err(e) => {
+                ctx.emit_error(e);
+                return None;
+            }
+        };
+        match s.parse() {
+            Ok(v) => Some(v),
+            Err(e) => {
+                ctx.emit_error(DecodeError::conversion(&val.literal, e));
+                None
+            }
+        }
+    }
+
+    /// Reports any leftover arguments and all properties of an argument-taking node.
+    fn reject_extras<S: knuffel::traits::ErrorSpan>(
+        mut iter_args: std::slice::Iter<'_, knuffel::ast::Value<S>>,
+        node: &knuffel::ast::SpannedNode<S>,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) {
+        if let Some(val) = iter_args.next() {
+            ctx.emit_error(DecodeError::unexpected(
+                &val.literal,
+                "argument",
+                "unexpected argument",
+            ));
+        }
+        for name in node.properties.keys() {
+            ctx.emit_error(DecodeError::unexpected(
+                name,
+                "property",
+                format!("unexpected property `{}`", name.escape_default()),
+            ));
+        }
+    }
+
+    /// Takes the single argument of an action.
+    fn single_arg<'a, S: knuffel::traits::ErrorSpan>(
+        name: &str,
+        node: &'a knuffel::ast::SpannedNode<S>,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> Result<&'a knuffel::ast::Value<S>, DecodeError<S>> {
+        let mut iter_args = node.arguments.iter();
+        let val = iter_args.next().ok_or_else(|| {
+            DecodeError::missing(node, format!("additional argument `{name}` is required"))
+        })?;
+        reject_extras(iter_args, node, ctx);
+        Ok(val)
+    }
+
+    /// Decodes the single argument of an action through `DecodeScalar`.
+    fn arg<S: knuffel::traits::ErrorSpan, T: knuffel::traits::DecodeScalar<S>>(
+        name: &str,
+        node: &knuffel::ast::SpannedNode<S>,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> Result<T, DecodeError<S>> {
+        let val = single_arg(name, node, ctx)?;
+        knuffel::traits::DecodeScalar::decode(val, ctx)
+    }
+
+    /// Decodes the single `FromStr` string argument of an action.
+    fn str_arg<S, T>(
+        name: &str,
+        node: &knuffel::ast::SpannedNode<S>,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> Result<T, DecodeError<S>>
+    where
+        S: knuffel::traits::ErrorSpan,
+        T: FromStr,
+        T::Err: Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    {
+        let val = single_arg(name, node, ctx)?;
+        let s: String = knuffel::traits::DecodeScalar::decode(val, ctx)?;
+        s.parse()
+            .map_err(|e| DecodeError::conversion(&val.literal, e))
+    }
+
+    /// Decodes the single argument of an action, which may be a KDL string passed through
+    /// `FromStr` (a signed adjustment) or a bare integer (an absolute value).
+    fn value_change_arg<S>(
+        name: &str,
+        node: &knuffel::ast::SpannedNode<S>,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> Result<ScreenshotValueChange, DecodeError<S>>
+    where
+        S: knuffel::traits::ErrorSpan,
+    {
+        let val = single_arg(name, node, ctx)?;
+
+        if let Some(type_name) = &val.type_name {
+            ctx.emit_error(DecodeError::unexpected(
+                type_name,
+                "type name",
+                "no type name expected for this node",
+            ));
+        }
+
+        let value = match &*val.literal {
+            // A bare number is an absolute value.
+            knuffel::ast::Literal::Int(int) => match u32::try_from(int) {
+                Ok(v) => ScreenshotValueChange::Set(v),
+                Err(e) => {
+                    ctx.emit_error(DecodeError::conversion(&val.literal, e));
+                    ScreenshotValueChange::Set(0)
+                }
+            },
+            // A quoted, signed string is an adjustment.
+            knuffel::ast::Literal::String(s) => match s.parse() {
+                Ok(v) => v,
+                Err(e) => {
+                    ctx.emit_error(DecodeError::conversion(&val.literal, e));
+                    ScreenshotValueChange::Set(0)
+                }
+            },
+            _ => {
+                ctx.emit_error(DecodeError::scalar_kind(
+                    knuffel::decode::Kind::Int,
+                    &val.literal,
+                ));
+                ScreenshotValueChange::Set(0)
+            }
+        };
+
+        Ok(value)
+    }
+
+    let action = match name {
+        "screenshot" => {
+            for val in &node.arguments {
+                ctx.emit_error(DecodeError::unexpected(
+                    &val.literal,
+                    "argument",
+                    "no arguments expected for this node",
+                ));
+            }
+            let mut props = Props::new(node);
+            let show_pointer = prop_or(&mut props, "show-pointer", true, ctx);
+            let tool = str_prop_or(&mut props, "tool", ScreenshotTool::Select, ctx);
+            props.finish(ctx);
+            Action::Screenshot {
+                show_pointer,
+                path: None,
+                tool,
+            }
+        }
+        "screenshot-tool" => Action::ScreenshotTool {
+            tool: str_arg("tool", node, ctx)?,
+        },
+        "screenshot-set-palette" => Action::ScreenshotSetPalette {
+            open: arg("open", node, ctx)?,
+        },
+        "screenshot-palette-color" => {
+            let index: u8 = arg("index", node, ctx)?;
+            if !(1..=7).contains(&index) {
+                ctx.emit_error(DecodeError::conversion(
+                    &node.arguments[0].literal,
+                    "palette color index must be between 1 and 7",
+                ));
+            }
+            Action::ScreenshotPaletteColor { index }
+        }
+        "screenshot-brush-color" => Action::ScreenshotBrushColor {
+            color: str_arg("color", node, ctx)?,
+        },
+        "screenshot-context" => {
+            let change = value_change_arg("change", node, ctx)?;
+            // The pointer context is not known at parse time, so absolute values accept the
+            // full stroke-width range; each target clamps to its own range at runtime.
+            if let ScreenshotValueChange::Set(change) = change {
+                if !(MIN_SCREENSHOT_BRUSH_WIDTH..=MAX_SCREENSHOT_BRUSH_WIDTH).contains(&change)
+                {
+                    ctx.emit_error(DecodeError::conversion(
+                        &node.arguments[0].literal,
+                        format!(
+                            "screenshot context value must be between \
+                             {MIN_SCREENSHOT_BRUSH_WIDTH} and {MAX_SCREENSHOT_BRUSH_WIDTH}"
+                        ),
+                    ));
+                }
+            }
+            Action::ScreenshotContext { change }
+        }
+        "screenshot-arrow-color" => Action::ScreenshotArrowColor {
+            color: str_arg("color", node, ctx)?,
+        },
+        "screenshot-rectangle-color" => Action::ScreenshotRectangleColor {
+            color: str_arg("color", node, ctx)?,
+        },
+        "screenshot-set-axes" => Action::ScreenshotSetAxes {
+            enabled: arg("enabled", node, ctx)?,
+        },
+        "screenshot-set-pointer" => Action::ScreenshotSetPointer {
+            show_pointer: arg("show-pointer", node, ctx)?,
+        },
+        "screenshot-move-selection" => {
+            for val in &node.arguments {
+                ctx.emit_error(DecodeError::unexpected(
+                    &val.literal,
+                    "argument",
+                    "no arguments expected for this node",
+                ));
+            }
+            let mut props = Props::new(node);
+            let x = prop_or(&mut props, "x", 0i32, ctx);
+            let y = prop_or(&mut props, "y", 0i32, ctx);
+            props.finish(ctx);
+            Action::ScreenshotMoveSelection { x, y }
+        }
+        "screenshot-resize-selection" => {
+            for val in &node.arguments {
+                ctx.emit_error(DecodeError::unexpected(
+                    &val.literal,
+                    "argument",
+                    "no arguments expected for this node",
+                ));
+            }
+            let mut props = Props::new(node);
+            let width = prop_or(&mut props, "width", 0i32, ctx);
+            let height = prop_or(&mut props, "height", 0i32, ctx);
+            props.finish(ctx);
+            Action::ScreenshotResizeSelection { width, height }
+        }
+        "screenshot-magnifier-zoom" => {
+            let zoom = value_change_arg("zoom", node, ctx)?;
+            if let ScreenshotValueChange::Set(zoom) = zoom {
+                if !matches!(zoom, 1 | 2 | 4 | 8 | 16 | 32) {
+                    ctx.emit_error(DecodeError::conversion(
+                        &node.arguments[0].literal,
+                        "magnifier zoom must be one of 1, 2, 4, 8, 16, 32",
+                    ));
+                }
+            }
+            Action::ScreenshotMagnifierZoom { zoom }
+        }
+        "confirm-screenshot" => {
+            for val in &node.arguments {
+                ctx.emit_error(DecodeError::unexpected(
+                    &val.literal,
+                    "argument",
+                    "no arguments expected for this node",
+                ));
+            }
+            let mut props = Props::new(node);
+            let write_to_disk = prop_or(&mut props, "write-to-disk", true, ctx);
+            let format = opt_str_prop(&mut props, "format", ctx);
+            let quality: Option<crate::FloatOrInt<0, 100>> =
+                prop_or(&mut props, "quality", None, ctx);
+            let quality = quality.map(|value| value.0 as f32);
+            if write_to_disk
+                && format == Some(ScreenshotFormat::Avif)
+                && quality.is_some_and(|q| q < 1.)
+            {
+                ctx.emit_error(DecodeError::unexpected(
+                    &node.node_name,
+                    "quality",
+                    "AVIF quality must be between 1 and 100",
+                ));
+            }
+            props.finish(ctx);
+            Action::ConfirmScreenshot {
+                write_to_disk,
+                format,
+                quality,
+            }
+        }
+        _ => unreachable!("checked above"),
+    };
+
+    Ok(action)
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum WorkspaceReference {
     Id(u64),
@@ -858,7 +1448,10 @@ where
     ) -> Result<Self, DecodeError<S>> {
         expect_only_children(node, ctx);
 
-        let mut seen_keys: HashMap<Key, &knuffel::ast::SpannedNode<S>> = HashMap::new();
+        // Duplicate keys are tracked per bind category so that an ordinary bind and an
+        // editor-local screenshot bind may share a trigger: only the one matching the
+        // current UI state is eligible, so they never compete.
+        let mut seen_keys: HashMap<(Key, bool), &knuffel::ast::SpannedNode<S>> = HashMap::new();
 
         let mut binds = Vec::new();
 
@@ -868,7 +1461,7 @@ where
                     ctx.emit_error(e);
                 }
                 Ok(bind) => {
-                    match seen_keys.entry(bind.key) {
+                    match seen_keys.entry((bind.key, bind.action.is_screenshot_editor_local())) {
                         Entry::Occupied(entry) => {
                             // Even though it's technically incorrect, we use
                             // `DecodeError::Missing` here because it labels the bind with
@@ -985,7 +1578,11 @@ where
                     "only one action is allowed per keybind",
                 ));
             }
-            match Action::decode_node(child, ctx) {
+            let action = match decode_screenshot_action(child, ctx) {
+                Some(res) => res,
+                None => Action::decode_node(child, ctx),
+            };
+            match action {
                 Ok(action) => {
                     if !matches!(action, Action::Spawn(_) | Action::SpawnSh(_)) {
                         if let Some(node) = allow_when_locked_node {
@@ -1006,7 +1603,9 @@ where
                     // Scroll triggers have no release event, so a hold bound to
                     // one could never end.
                     let needs_release = matches!(action, Action::Zoom(_, true, _))
-                        || matches!(action, Action::ZoomLock(true));
+                        || matches!(action, Action::ZoomLock(true))
+                        || matches!(action, Action::ScreenshotMoveSelectionHold)
+                        || matches!(action, Action::ScreenshotToggleAxes(true));
                     if needs_release
                         && matches!(
                             key.trigger,
@@ -1184,6 +1783,322 @@ mod tests {
             }
         );
     }
+    #[test]
+    fn parse_screenshot_open_action() {
+        let config = crate::Config::parse_mem(
+            r#"
+            binds {
+                Alt+U { screenshot tool="select" show-pointer=false; }
+                Alt+Shift+U { screenshot tool="draw" show-pointer=false; }
+                Print { screenshot; }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let actions: Vec<&Action> = config.binds.0.iter().map(|bind| &bind.action).collect();
+        assert_eq!(
+            actions,
+            [
+                &Action::Screenshot {
+                    show_pointer: false,
+                    path: None,
+                    tool: ScreenshotTool::Select,
+                },
+                &Action::Screenshot {
+                    show_pointer: false,
+                    path: None,
+                    tool: ScreenshotTool::Draw,
+                },
+                &Action::Screenshot {
+                    show_pointer: true,
+                    path: None,
+                    tool: ScreenshotTool::Select,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_screenshot_editor_actions() {
+        let config = crate::Config::parse_mem(
+            r##"
+            binds {
+                V { screenshot-tool "select"; }
+                B { screenshot-tool "draw"; }
+                R { screenshot-tool "blur"; }
+                C { screenshot-toggle-palette; }
+                Mod+C { screenshot-set-palette true; }
+                "1" { screenshot-palette-color 1; }
+                "7" { screenshot-palette-color 7; }
+                Mod+B { screenshot-brush-color "#0080ff"; }
+                Minus { screenshot-context "-1"; }
+                Equal { screenshot-context "+1"; }
+                Mod+Equal { screenshot-context 6; }
+                Ctrl+Z { screenshot-undo; }
+                Ctrl+Shift+Z { screenshot-redo; }
+                P { screenshot-toggle-pointer; }
+                Mod+P { screenshot-set-pointer false; }
+                Left { screenshot-move-selection x=-1 y=0; }
+                Mod+Right { screenshot-move-selection x=20; }
+                Shift+Left { screenshot-resize-selection width=-1 height=0; }
+                Mod+Down { screenshot-resize-selection height=4; }
+                Space repeat=false { screenshot-move-selection-hold; }
+                WheelScrollUp { screenshot-magnifier-zoom "+1"; }
+                WheelScrollDown { screenshot-magnifier-zoom "-1"; }
+                Mod+WheelScrollUp { screenshot-magnifier-zoom 4; }
+                Tab { screenshot-focus-next; }
+                Shift+Tab { screenshot-focus-previous; }
+                Return { screenshot-confirm; }
+                Escape { screenshot-cancel; }
+                Ctrl+S { confirm-screenshot write-to-disk=true; }
+                Ctrl+C { confirm-screenshot; }
+                Ctrl+V { confirm-screenshot format="avif" quality=37.5; }
+                Ctrl+W { cancel-screenshot; }
+                T { screenshot-tool "arrow"; }
+                Mod+T { screenshot-tool "rectangle"; }
+                Mod+1 { screenshot-arrow-color "#00ff00"; }
+                Mod+2 { screenshot-context "+2"; }
+                Mod+3 { screenshot-context 1; }
+                Mod+4 { screenshot-rectangle-color "#0000ff"; }
+                Mod+5 { screenshot-context 128; }
+                X { screenshot-toggle-axes; }
+                Mod+X { screenshot-set-axes false; }
+                Shift_L repeat=false { screenshot-toggle-axes hold=true; }
+            }
+            "##,
+        )
+        .unwrap();
+
+        let actions: Vec<&Action> = config.binds.0.iter().map(|bind| &bind.action).collect();
+        assert_eq!(
+            actions,
+            [
+                &Action::ScreenshotTool {
+                    tool: ScreenshotTool::Select
+                },
+                &Action::ScreenshotTool {
+                    tool: ScreenshotTool::Draw
+                },
+                &Action::ScreenshotTool {
+                    tool: ScreenshotTool::Blur
+                },
+                &Action::ScreenshotTogglePalette,
+                &Action::ScreenshotSetPalette { open: true },
+                &Action::ScreenshotPaletteColor { index: 1 },
+                &Action::ScreenshotPaletteColor { index: 7 },
+                &Action::ScreenshotBrushColor {
+                    color: ScreenshotColor::new(0x00, 0x80, 0xff)
+                },
+                &Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Adjust(-1)
+                },
+                &Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Adjust(1)
+                },
+                &Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Set(6)
+                },
+                &Action::ScreenshotUndo,
+                &Action::ScreenshotRedo,
+                &Action::ScreenshotTogglePointer,
+                &Action::ScreenshotSetPointer {
+                    show_pointer: false
+                },
+                &Action::ScreenshotMoveSelection { x: -1, y: 0 },
+                &Action::ScreenshotMoveSelection { x: 20, y: 0 },
+                &Action::ScreenshotResizeSelection {
+                    width: -1,
+                    height: 0
+                },
+                &Action::ScreenshotResizeSelection {
+                    width: 0,
+                    height: 4
+                },
+                &Action::ScreenshotMoveSelectionHold,
+                &Action::ScreenshotMagnifierZoom {
+                    zoom: ScreenshotValueChange::Adjust(1)
+                },
+                &Action::ScreenshotMagnifierZoom {
+                    zoom: ScreenshotValueChange::Adjust(-1)
+                },
+                &Action::ScreenshotMagnifierZoom {
+                    zoom: ScreenshotValueChange::Set(4)
+                },
+                &Action::ScreenshotFocusNext,
+                &Action::ScreenshotFocusPrevious,
+                &Action::ScreenshotConfirm,
+                &Action::ScreenshotCancel,
+                &Action::ConfirmScreenshot {
+                    write_to_disk: true,
+                    format: None,
+                    quality: None,
+                },
+                &Action::ConfirmScreenshot {
+                    write_to_disk: true,
+                    format: None,
+                    quality: None,
+                },
+                &Action::ConfirmScreenshot {
+                    write_to_disk: true,
+                    format: Some(ScreenshotFormat::Avif),
+                    quality: Some(37.5),
+                },
+                &Action::CancelScreenshot,
+                &Action::ScreenshotTool {
+                    tool: ScreenshotTool::Arrow
+                },
+                &Action::ScreenshotTool {
+                    tool: ScreenshotTool::Rectangle
+                },
+                &Action::ScreenshotArrowColor {
+                    color: ScreenshotColor::new(0x00, 0xff, 0x00)
+                },
+                &Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Adjust(2)
+                },
+                &Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Set(1)
+                },
+                &Action::ScreenshotRectangleColor {
+                    color: ScreenshotColor::new(0x00, 0x00, 0xff)
+                },
+                &Action::ScreenshotContext {
+                    change: ScreenshotValueChange::Set(128)
+                },
+                &Action::ScreenshotToggleAxes(false),
+                &Action::ScreenshotSetAxes { enabled: false },
+                &Action::ScreenshotToggleAxes(true),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_screenshot_editor_actions_invalid() {
+        for action in [
+            r#"V { confirm-screenshot quality=-1; }"#,
+            r#"V { confirm-screenshot quality=100.1; }"#,
+            r#"V { confirm-screenshot format="avif" quality=0; }"#,
+            r#"V { confirm-screenshot quality="high"; }"#,
+            // Unknown tool.
+            r##"V { screenshot-tool "crop"; }"##,
+            // Bad colors.
+            r##"V { screenshot-brush-color "0080ff"; }"##,
+            r##"V { screenshot-brush-color "#80ff"; }"##,
+            r##"V { screenshot-brush-color "#0080ffcc"; }"##,
+            // Malformed adjustments and types.
+            r#"V { screenshot-context "abc"; }"#,
+            r#"V { screenshot-context -1; }"#,
+            r#"V { screenshot-context 1.5; }"#,
+            r#"V { screenshot-context "+"; }"#,
+            r#"V { screenshot-context; }"#,
+            r#"V { screenshot-set-pointer; }"#,
+            r#"V { screenshot-move-selection x="-1"; }"#,
+            r#"V { screenshot-palette-color "3"; }"#,
+            // Absolute values out of range.
+            r#"V { screenshot-palette-color 0; }"#,
+            r#"V { screenshot-palette-color 8; }"#,
+            r#"V { screenshot-context 0; }"#,
+            r#"V { screenshot-context 129; }"#,
+            r#"V { screenshot-magnifier-zoom 3; }"#,
+            r#"V { screenshot-magnifier-zoom 64; }"#,
+            r#"V { screenshot-magnifier-zoom 0; }"#,
+            // Per-tool colors still reuse the color form.
+            r##"V { screenshot-arrow-color "green"; }"##,
+            r##"V { screenshot-arrow-color "#00ff0080"; }"##,
+            r##"V { screenshot-rectangle-color "#fff"; }"##,
+            // The old per-tool width and blur-strength actions no longer exist, and neither
+            // does the intermediate factor name.
+            r#"V { screenshot-brush-width 6; }"#,
+            r#"V { screenshot-arrow-width 8; }"#,
+            r#"V { screenshot-rectangle-width "-1"; }"#,
+            r#"V { screenshot-blur-strength 3; }"#,
+            r#"V { screenshot-factor "+1"; }"#,
+            r#"V { screenshot-set-axes; }"#,
+            r#"V { screenshot-set-axes "yes"; }"#,
+            // Unknown action name.
+            r#"V { screenshot-scribble; }"#,
+            // Unexpected extra content.
+            r#"V { screenshot-tool "draw" "extra"; }"#,
+            r#"V { screenshot-undo x=1; }"#,
+            r#"V { screenshot-move-selection -1; }"#,
+            r#"V { screenshot move-selection=1; }"#,
+            r##"V { screenshot tool="bogus"; }"##,
+            // `screenshot` takes no positional argument; path is IPC-only.
+            r#"Print { screenshot "/tmp/x.png"; }"#,
+            // Unknown format value, wrong type, and format on actions that don't take it.
+            r##"V { confirm-screenshot format="jpeg"; }"##,
+            r#"V { confirm-screenshot format=1; }"#,
+            r##"V { screenshot format="webp"; }"##,
+            r##"V { screenshot-screen format="webp"; }"##,
+        ] {
+            let text = format!("binds {{ {action} }}");
+            assert!(
+                crate::Config::parse_mem(&text).is_err(),
+                "expected parse error for: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn screenshot_local_and_ordinary_share_trigger() {
+        // The same key may be bound once in the ordinary category and once among
+        // screenshot editor-local binds; only the matching one runs.
+        let config = crate::Config::parse_mem(
+            r#"
+            binds {
+                Mod+Z { screenshot-undo; }
+                Mod+Z { close-window; }
+            }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.binds.0.len(), 2);
+        assert!(config.binds.0[0].action.is_screenshot_editor_local());
+        assert!(!config.binds.0[1].action.is_screenshot_editor_local());
+    }
+
+    #[test]
+    fn duplicate_bind_within_category_is_error() {
+        for (first, second) in [
+            ("screenshot-undo;", "screenshot-redo;"),
+            ("screenshot-undo;", "cancel-screenshot;"),
+            ("screenshot-undo;", "confirm-screenshot;"),
+            // Ordinary duplicates keep failing.
+            ("close-window;", "close-window;"),
+            ("close-window;", "spawn \"x\";"),
+            // Two different triggers still share by key+modifiers.
+        ] {
+            let text = format!("binds {{\n    Mod+Z {{ {first} }}\n    Mod+Z {{ {second} }}\n}}");
+            assert!(
+                crate::Config::parse_mem(&text).is_err(),
+                "expected duplicate error for: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn move_selection_hold_needs_release_trigger() {
+        // Scroll triggers have no release event, so a hold bound to one could never end.
+        for trigger in [
+            "WheelScrollUp",
+            "WheelScrollDown",
+            "TouchpadScrollUp",
+            "TouchpadScrollDown",
+        ] {
+            let text = format!("binds {{\n    {trigger} {{ screenshot-move-selection-hold; }}\n}}");
+            assert!(
+                crate::Config::parse_mem(&text).is_err(),
+                "expected parse error for: {text}"
+            );
+        }
+
+        for trigger in ["Space", "Mod+A", "MouseRight"] {
+            let text = format!("binds {{\n    {trigger} {{ screenshot-move-selection-hold; }}\n}}");
+            assert!(crate::Config::parse_mem(&text).is_ok(), "{text}");
+        }
+    }
 
     #[test]
     fn parse_iso_level_shifts() {
@@ -1216,22 +2131,6 @@ mod tests {
                 modifiers: Modifiers::ISO_LEVEL5_SHIFT
             },
         );
-    }
-
-    #[test]
-    fn parse_screenshot_editor_actions() {
-        let config = crate::Config::parse_mem(
-            r#"
-            binds {
-                Mod+Z { screenshot-undo; }
-                Mod+Shift+Z { screenshot-redo; }
-            }
-            "#,
-        )
-        .unwrap();
-
-        let actions: Vec<&Action> = config.binds.0.iter().map(|bind| &bind.action).collect();
-        assert_eq!(actions, [&Action::ScreenshotUndo, &Action::ScreenshotRedo]);
     }
 
     #[test]

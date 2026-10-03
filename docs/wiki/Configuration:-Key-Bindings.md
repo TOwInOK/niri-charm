@@ -368,26 +368,53 @@ binds {
 }
 ```
 
+The root `screenshot-format` setting chooses the default file format. Override it
+for one editor export with `confirm-screenshot format=...`; this does not change
+the config or subsequent saves. Clipboard contents always remain PNG.
+
+```kdl
+screenshot-format "png"
+screenshot-path "~/Pictures/Screenshots/%Y-%m-%d_%H-%M-%S.{ext}"
+binds {
+    Ctrl+S { confirm-screenshot; }
+    Ctrl+Alt+P { confirm-screenshot format="png"; }
+    Ctrl+Alt+W { confirm-screenshot format="webp"; }
+    Ctrl+Alt+A { confirm-screenshot format="avif"; }
+}
+```
+
+PNG is lossless; WebP defaults to lossless and AVIF to lossy quality 90 with 4:4:4 chroma.
+Pass `quality=85` to `confirm-screenshot` for one export (WebP 0–100, AVIF 1–100).
+Omitting quality preserves lossless WebP / AVIF quality 90; PNG ignores it.
+The same override is available as `niri msg action confirm-screenshot --format avif --quality 85`.
+
 In the interactive screenshot UI, pressing <kbd>Ctrl</kbd><kbd>C</kbd> will copy the screenshot to the clipboard without writing it to disk.
 
-The screenshot editor freezes each output when opened. Its rectangular, bordered SVG toolbar stays centered at the top in one row, shrinking to fit narrow outputs. Hovering anywhere in a button segment lightens that segment’s background; the active tool uses the accent icon color. The panel is fully opaque at rest and fades to 50% opacity during selection, drawing, blur, and crop-move gestures, returning on release or cancellation. Clicking toolbar controls does not fade the panel. Hover and keyboard focus show shortcut tooltips.
+The screenshot editor freezes each output when opened. Its rectangular SVG toolbar, selection appearance, brush, blur strength and magnifier are configured in the root `screenshot` block. Position, alignment, independent edge margins, colors, sizes and resting/drag opacity are configurable. See [Screenshot configuration](./Configuration:-Screenshot.md) for appearance settings and examples.
+
+All keyboard and wheel actions use the existing root `binds` block; there are no hidden fallback shortcuts. **Existing user configs must add the editor bindings** from the example or `resources/default-config.kdl`. The shortcuts below describe those supplied bindings, not hardcoded keys. Local editor bindings are ignored while closed and take priority over ordinary bindings on the same key while open.
 
 - **Select · V:** drag to select the crop. Existing selection movement and resize binds still work; holding Space or the compositor modifier while dragging moves the crop in any tool. Space no longer saves the screenshot.
-- **Draw · B:** drag a freehand stroke, or click to draw a dot. Strokes are four captured pixels wide. Clicking the brush button selects Draw and toggles its palette; pressing B selects Draw without opening the palette. A horizontal stripe beneath the brush icon shows the current drawing color, including when another tool is selected. It has the same placement as the cursor button’s status stripe.
-- **Blur · R:** drag a rectangle to blur the frozen background. Drawing stays sharp above blur, regardless of operation order. Blur is not a guarantee of secure redaction of sensitive information.
-- **Palette · C:** integrated into the brush button, with no separate toolbar button. Press C while Draw is selected, or click the brush, to open it. Choose one of seven colors with a click or keys 1–7. The selected swatch has a contrasting border and check mark. Choosing a color closes the popover; clicking outside dismisses it without starting a stroke. Existing strokes retain their colors. Enter on the focused brush opens the palette and focuses the current swatch; choosing a color or pressing Escape returns focus to the brush.
-- **Undo / Redo:** navigate the shared history of strokes and blur rectangles across outputs. Ctrl+Z or Alt+Z undo; Ctrl+Shift+Z, Ctrl+Y, or Alt+Shift+Z redo. Unavailable history buttons are dimmed.
+- **Draw, B:** drag a freehand stroke or click for a dot. Width and color are captured per stroke. Each colored tool shows its own bottom color stripe and width number. Repeated activation of its selected button opens its palette (`open-palette-on-click`); selecting a different tool does not.
+- **Arrow, A / Rectangle, D:** drag tail-to-head or between opposite corners. Rectangles are unfilled; arrow heads scale with width. Colors, widths and palettes are independent of Draw. Each completed gesture is one undo/redo operation.
+- **Blur, R:** drag a rectangle to blur the frozen background beneath drawings. Three bottom segments show low/medium/high; the shared `Minus` / `Equal` bindings adjust the parameter under the pointer — strength over the Blur button — without wrapping, for new regions only. Clicking Blur only selects it. Blur is not a guarantee of secure redaction.
+- **Axes, X / hold Shift_L:** shared constraint mode for Draw, Arrow and Rectangle. Both dashed guides use the same color/opacity. During drag, release and press hold again to move the anchor to the current drawn point without completing the figure. For Rectangle this lets you set width, reanchor and set height in one drag. Release returns the toggle state. The separate toolbar toggle is before Copy/Save.
+- **Palette, C:** opens for the active Draw, Arrow or Rectangle tool. Configure 1–7 opaque colors in its `brush.palette`, `arrow.palette` or `rectangle.palette`; click or use the supplied digit bindings. Clicking outside dismisses it without painting.
+- **Undo / Redo:** Ctrl+Z undoes; Ctrl+Shift+Z or Ctrl+Y redoes the shared history across outputs. Undo during drawing/blur cancels the unfinished gesture. Unavailable buttons are dimmed.
 - **Cursor · P:** toggle the captured pointer. The same solid, neutral cursor icon is used in both states; an accent stripe beneath it indicates that the pointer is included.
 - **Copy · Ctrl+C:** copy the crop without writing a file.
 - **Save · Enter / Ctrl+S:** save and copy the crop.
 
-Tab / Shift+Tab move focus among enabled controls; Enter activates a focused control rather than saving unexpectedly. Escape first dismisses an open palette, then cancels an unfinished gesture (restoring the previous crop for selection/movement), and otherwise closes the editor without saving. These editor shortcuts are hardcoded for now and do not change desktop bindings outside the editor. Configured screenshot undo/redo bindings remain supported.
+Tab / Shift+Tab move focus among enabled controls; Enter activates the focused control, or saves when there is no focus. Escape dismisses the palette, cancels a gesture (restoring crop), then closes the editor. Explicit `confirm-screenshot write-to-disk=false/true` always means copy/save, regardless of focus. Export during an unfinished gesture is ignored.
 
-The magnifier previews the frozen image with its edits. Neither the toolbar, magnifier, nor selection decoration is included in the exported image. Edits stay attached to their output pixels when the crop moves. Selection is limited to one output at a time.
+The magnifier previews the frozen image with its edits. Toolbar, magnifier, selection, axis guides and brush-size cursor never enter the exported image. Edits stay attached to output pixels when the crop moves. Selection is limited to one output at a time.
 Only the frozen background outside the crop is dimmed. Draw strokes and blur regions keep their full brightness inside and outside the crop; selection borders and controls remain above the edits.
 
-The circular magnifier starts hidden at **1×** each time the editor opens. Scroll up/down to switch between **1×, 2×, 4×, 8×, 16×, and 32×**; scrolling is owned by the editor and does not change desktop zoom. At 4× and above, a one-source-pixel grid helps precise selection. The center pixel is outlined, and the existing crosshair cursor marks the selection hotspot. Magnification uses nearest-neighbor sampling, with no RGB/Hex/coordinate panel. Near output edges the source stays centered on the cursor; the lens moves to the opposite side when space permits.
-At **1×** the magnifier is hidden. Scroll up once to show it again at **2×**; the selection crosshair remains available while the lens is hidden.
+Keyboard focus from `screenshot-focus-next` / `screenshot-focus-previous` takes priority for `screenshot-context`: a focused tool changes its own parameter without becoming selected; focused Select or other UI blocks the command. Mouse movement clears focus. The pointer-routing rules below apply when no control has keyboard focus; explicit `screenshot-magnifier-zoom` ignores both focus and hover.
+
+The circular magnifier uses nearest-neighbor sampling. `initial-zoom` sets the opening scale, `show-from` its visibility threshold, `max-zoom` the limit, and `grid-from` the independent pixel-grid threshold. The supplied wheel bindings bind `screenshot-context`: over the canvas they step power-of-two zoom (`+1` / `-1`), over a tool button they adjust that tool's parameter, elsewhere they do nothing. Explicit `screenshot-magnifier-zoom` zooms regardless of the pointer position. Scrolling never changes desktop zoom while the editor is open. The center pixel retains its exact color. Cross-highlight and its color are configurable; the lens stays out of exports.
+
+Reload updates theme, geometry, palette and magnifier limits without resetting tool, color, width, history or crop; geometry changes wait until a gesture ends. Brush defaults and initial zoom apply on the next opening. Commands are also available through `niri msg action`: for example `screenshot --tool draw`, `screenshot-brush-color "#0080ff"`, `screenshot-context +1`, and `screenshot-magnifier-zoom 4`. `screenshot-context` changes the value under the pointer: stroke width for Draw, Arrow and Rectangle (`1`–`128`), strength for Blur (`1`–`3`), magnifier zoom over the canvas; a bare integer is absolute — each target clamps it to its range — a signed string adjusts, and over Select or other UI it is a no-op that does not zoom. `screenshot-magnifier-zoom` acts directly, ignoring the pointer.
 The center pixel's row and column are highlighted across the circular lens. Each band is one source pixel wide and follows the magnification; the center pixel itself retains its original color inside its outline. This overlay is excluded from export.
 
 History lasts until the editor closes. Changing the tool, color, or crop does not add a history entry. A new completed edit clears redo history; undo during a drawing or blur gesture cancels that unfinished edit. If an edit cannot be rendered, the toolbar displays an error message and saving leaves the editor open rather than silently exporting without the effect.

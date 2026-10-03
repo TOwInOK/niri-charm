@@ -44,6 +44,12 @@ impl Shaders {
             &[
                 UniformName::new("source_size", UniformType::_1f),
                 UniformName::new("zoom", UniformType::_1f),
+                UniformName::new("grid_from", UniformType::_1f),
+                UniformName::new("grid_enabled", UniformType::_1f),
+                UniformName::new("cross_color", UniformType::_4f),
+                UniformName::new("border_color", UniformType::_4f),
+                UniformName::new("border_width", UniformType::_1f),
+                UniformName::new("grid_color", UniformType::_4f),
             ],
             &["image"],
         )

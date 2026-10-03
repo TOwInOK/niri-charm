@@ -77,6 +77,8 @@ BuildRequires:  pango-devel
 BuildRequires:  cairo-gobject-devel
 # Needed for pipewire-rs
 BuildRequires:  clang
+# Needed for the AVIF encoder assembly on x86.
+BuildRequires:  nasm
 # Needed for some tests with a surfaceless EGL renderer
 BuildRequires:  mesa-libEGL
 

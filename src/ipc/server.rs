@@ -516,6 +516,9 @@ pub(crate) fn zoom_state(niri: &crate::niri::Niri) -> Vec<niri_ipc::ZoomState> {
 }
 
 fn validate_action(action: &Action) -> Result<(), String> {
+    // Argument checks shared with the CLI and the config-file parser.
+    action.validate()?;
+
     if let Action::Screenshot { path, .. }
     | Action::ScreenshotScreen { path, .. }
     | Action::ScreenshotWindow { path, .. }

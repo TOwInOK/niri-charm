@@ -23,6 +23,7 @@
           libxkbcommon,
           libgbm,
           pango,
+          nasm,
           pipewire,
           pkg-config,
           rustPlatform,
@@ -74,6 +75,7 @@
           nativeBuildInputs = [
             rustPlatform.bindgenHook
             pkg-config
+            nasm
           ];
 
           buildInputs = [
@@ -190,6 +192,7 @@
             nativeBuildInputs = [
               pkgs.rustPlatform.bindgenHook
               pkgs.pkg-config
+              pkgs.nasm
               pkgs.wrapGAppsHook4 # For `niri-visual-tests`
             ];
 

@@ -7,6 +7,12 @@ uniform sampler2D image;
 uniform float source_size;
 uniform float zoom;
 
+uniform float grid_from;
+uniform float grid_enabled;
+uniform vec4 cross_color;
+uniform vec4 border_color;
+uniform float border_width;
+uniform vec4 grid_color;
 void main() {
     vec2 p = (niri_v_coords - 0.5) * niri_size / niri_scale;
     vec2 a = abs(p);
@@ -22,20 +28,22 @@ void main() {
     bool column = a.x < zoom * 0.5;
     bool row = a.y < zoom * 0.5;
     if (column != row) {
-        color.rgb = mix(color.rgb, vec3(0.65, 0.85, 0.95), 0.35);
+        color.rgb = mix(color.rgb, cross_color.rgb, cross_color.a);
     }
-    if (zoom >= 4.0) {
+    if (grid_enabled > 0.5 && zoom >= grid_from) {
         vec2 boundary = fract(cell + 0.5) * zoom;
         float distance_to_grid = min(boundary.x, boundary.y);
-        color.rgb *= mix(0.45, 1.0, step(1.0 / niri_scale, distance_to_grid));
+        float line = 1.0 - step(1.0 / niri_scale, distance_to_grid);
+        color.rgb = mix(color.rgb, grid_color.rgb, grid_color.a * line);
     }
     // Highlight the exact source pixel under the cursor without filling it.
     float center_edge = max(a.x, a.y) - zoom * 0.5;
     if (abs(center_edge) < 1.0 / niri_scale) {
         color.rgb = vec3(center_edge < 0.0 ? 1.0 : 0.0);
     }
-    if (edge < 2.0 / niri_scale) {
-        color.rgb = vec3(edge < 1.0 / niri_scale ? 0.0 : 1.0);
+    float border = clamp((border_width - edge) * niri_scale + 0.5, 0.0, 1.0);
+    if (border_width > 0.0) {
+        color.rgb = mix(color.rgb, border_color.rgb, border_color.a * border);
     }
     gl_FragColor = color * clamp(edge * niri_scale, 0.0, 1.0) * niri_alpha;
 }

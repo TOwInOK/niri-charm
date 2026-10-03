@@ -133,14 +133,57 @@ The path is formatted with `strftime(3)` to give you the screenshot date and tim
 Niri will create the last folder of the path if it doesn't exist.
 
 ```kdl
-screenshot-path "~/Pictures/Screenshots/Screenshot from %Y-%m-%d %H-%M-%S.png"
+screenshot-path "~/Pictures/Screenshots/Screenshot from %Y-%m-%d %H-%M-%S.{ext}"
 ```
+
+`{ext}` expands to the chosen file format. Existing templates ending in `.png`
+also work: their extension is replaced with the chosen format. A template
+without an extension gets one appended. Explicit action/IPC `path` arguments
+remain literal: a conflicting extension is rejected, not silently renamed.
 
 You can also set this option to `null` to disable saving screenshots to disk.
 
 ```kdl
 screenshot-path null
 ```
+
+### `screenshot-format`
+
+Sets the default file format for interactive screenshots, screen captures and
+window captures. PNG is the default when omitted.
+
+```kdl
+screenshot-format "webp"
+```
+
+- `png`: lossless.
+- `webp`: lossless by default; configurable lossy quality.
+- `avif`: lossy, default quality 90, 8-bit, full-resolution 4:4:4 chroma; slower to encode.
+
+Encoding runs in a background thread. Clipboard images remain `image/png`,
+independently of the file format. The GNOME screenshot D-Bus API remains PNG.
+
+Use `confirm-screenshot format="avif"` to override the format for one editor
+export. Without an override, Save, Enter and ordinary save bindings use the
+current config. Overrides never change subsequent saves or the config.
+`write-to-disk=false` ignores the file format and only copies PNG.
+
+Quality is a per-export parameter of `confirm-screenshot`, not a global setting:
+
+```kdl
+binds {
+    Ctrl+Alt+W { confirm-screenshot format="webp" quality=85; }
+    Ctrl+Alt+A { confirm-screenshot format="avif" quality=90; }
+}
+```
+
+CLI: `niri msg action confirm-screenshot --format webp --quality 85`.
+WebP accepts 0–100 (lossy, even at 100); AVIF accepts 1–100. Decimal values
+are supported. Omit quality for lossless WebP or AVIF quality 90.
+The selected format may also come from `screenshot-format`. Quality applies
+only to this export and never changes later captures. PNG and clipboard-only
+exports ignore quality. Out-of-range values are rejected; if the format comes
+from config, an invalid AVIF quality leaves the editor open for a corrected retry.
 
 ### `environment`
 

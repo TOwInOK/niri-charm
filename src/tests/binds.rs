@@ -416,16 +416,46 @@ fn inhibiting() {
 
 #[test]
 fn screenshot_editor_binds_passthrough() {
-    let config = "
+    let config = r#"
     binds {
         Ctrl+Z { screenshot-undo; }
         Ctrl+Shift+Z { screenshot-redo; }
         Ctrl+Y { screenshot-redo; }
+        Space repeat=false { screenshot-move-selection-hold; }
+        WheelScrollUp { screenshot-magnifier-zoom "+1"; }
     }
-    ";
-    let input = "+LCTL +AB01 -AB01 +AD06 -AD06 +LFSH +AB01 -AB01 -LFSH -LCTL";
+    "#;
+    let input = "+LCTL +AB01 -AB01 +AD06 -AD06 +LFSH +AB01 -AB01 -LFSH -LCTL +SPCE -SPCE";
     let (mut f, id, surface) = set_up_with(config, Clone::clone);
     // With the editor closed, a real Wayland client sees exactly the same
     // presses, releases and modifier transitions as without these bindings.
     assert_eq!(run_f(&mut f, id, &surface, input), run("", input));
+}
+
+#[test]
+fn screenshot_editor_binds_while_open() {
+    let config = r#"
+    binds {
+        Z { screenshot-undo; }
+        Space repeat=false { screenshot-move-selection-hold; }
+    }
+    "#;
+    let input = "+AB01 -AB01 +SPCE -SPCE";
+    let (mut f, id, surface) = set_up_with(config, Clone::clone);
+
+    // Closed: the client sees everything, including the releases.
+    assert_eq!(run_f(&mut f, id, &surface, input), run("", input));
+
+    f.niri_state().backend.headless().add_renderer().unwrap();
+    f.niri_state()
+        .open_screenshot_ui(false, None, niri_ipc::ScreenshotTool::Select);
+    assert!(f.niri().screenshot_ui.is_open());
+
+    // Open: the editor-local binds intercept their presses, so the client
+    // sees neither the presses nor the releases.
+    let out = run_f(&mut f, id, &surface, input);
+    assert!(
+        !out.contains("surface key"),
+        "client must not see editor bind keys: {out}"
+    );
 }
