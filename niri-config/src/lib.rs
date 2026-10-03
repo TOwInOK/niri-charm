@@ -256,8 +256,14 @@ where
                     // your own.
                     let mut config = config.borrow_mut();
                     let binds = &mut config.binds.0;
-                    // Remove existing binds matching any new bind.
-                    binds.retain(|bind| !part.0.iter().any(|new| new.key == bind.key));
+                    // Only binds in the same category override one another.
+                    binds.retain(|bind| {
+                        !part.0.iter().any(|new| {
+                            new.key == bind.key
+                                && new.action.is_screenshot_editor_local()
+                                    == bind.action.is_screenshot_editor_local()
+                        })
+                    });
                     // Add all new binds.
                     binds.extend(part.0);
                 }
@@ -1586,6 +1592,55 @@ mod tests {
                 "expected parse error for: {text}"
             );
         }
+    }
+
+    #[test]
+    fn included_binds_override_only_the_matching_category() {
+        let dir = std::env::temp_dir().join(format!("niri-binds-include-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("inc.kdl"),
+            r#"binds { B { spawn "old"; }; B { screenshot-tool "draw"; }; }"#,
+        )
+        .unwrap();
+        let config = Config::parse(
+            &dir.join("config.kdl"),
+            "include \"inc.kdl\"\nbinds { B { spawn \"new\"; }; }",
+        )
+        .config
+        .unwrap();
+        assert_eq!(config.binds.0.len(), 2);
+        assert!(config
+            .binds
+            .0
+            .iter()
+            .any(|b| b.action == Action::Spawn(vec!["new".into()])));
+        assert!(config.binds.0.iter().any(|b| matches!(
+            b.action,
+            Action::ScreenshotTool {
+                tool: niri_ipc::ScreenshotTool::Draw
+            }
+        )));
+
+        let config = Config::parse(
+            &dir.join("config.kdl"),
+            "include \"inc.kdl\"\nbinds { B { screenshot-tool \"blur\"; }; }",
+        )
+        .config
+        .unwrap();
+        assert_eq!(config.binds.0.len(), 2);
+        assert!(config
+            .binds
+            .0
+            .iter()
+            .any(|b| b.action == Action::Spawn(vec!["old".into()])));
+        assert!(config.binds.0.iter().any(|b| matches!(
+            b.action,
+            Action::ScreenshotTool {
+                tool: niri_ipc::ScreenshotTool::Blur
+            }
+        )));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
