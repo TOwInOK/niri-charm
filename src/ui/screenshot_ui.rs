@@ -1735,6 +1735,30 @@ impl ScreenshotUi {
         true
     }
 
+    pub fn cancel_touch(&mut self) -> bool {
+        let Self::Open { interaction, .. } = self else {
+            return false;
+        };
+        match interaction {
+            Interaction::Canvas { slot: Some(_), .. }
+            | Interaction::Toolbar { slot: Some(_), .. }
+            | Interaction::Overlay { slot: Some(_), .. } => (),
+            Interaction::Selection(drag) if drag.touch_slot.is_some() => (),
+            Interaction::Selection(drag) => {
+                // A touch can temporarily move a selection dragged by the mouse.
+                if matches!(&drag.mode, SelectionMode::Move(state) if state.touch_slot.is_some()) {
+                    drag.mode = SelectionMode::Select;
+                    return true;
+                }
+                return false;
+            }
+            _ => return false,
+        }
+        self.cancel_edit();
+        self.apply_pending_config();
+        true
+    }
+
     pub fn pointer_up(&mut self, slot: Option<TouchSlot>) -> Option<EditorOutcome> {
         let outcome = self.pointer_up_inner(slot);
         self.apply_pending_config();

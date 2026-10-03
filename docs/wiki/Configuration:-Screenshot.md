@@ -302,6 +302,8 @@ Opening tools are `"select"` (default), `"draw"`, `"arrow"`, `"rectangle"` and `
 
 `screenshot-confirm` activates the keyboard-focused control; without focus it saves and copies. `confirm-screenshot` exports regardless of focus. Neither exports an unfinished gesture. `screenshot-cancel` closes the palette, cancels the current gesture, then closes the editor on subsequent calls; `cancel-screenshot` immediately discards the session.
 
+A cancelled touch sequence discards its unfinished drawing, restores an interrupted crop selection, and applies any deferred configuration reload. It does not close the editor or cancel a mouse-owned gesture. A new touch sequence can start immediately, including with the same touch slot.
+
 ### Full-feature demo configuration
 
 The repository example `resources/knit-desktop.kdl` exposes all editor actions and independent tool settings. It is a demo, not the default configuration above: it starts Zed, Obsidian and two Ghostty windows. Run it from an existing Wayland session with `./target/debug/niri --config resources/knit-desktop.kdl`.

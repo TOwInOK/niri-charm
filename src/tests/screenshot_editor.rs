@@ -1550,3 +1550,134 @@ fn screenshot_selection_touch_release_order_preserves_crop() {
         assert!(!ui.has_active_gesture());
     }
 }
+
+#[test]
+fn screenshot_editor_touch_cancel_discards_stroke_and_allows_reused_slot() {
+    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
+    use smithay::backend::input::InputEvent;
+
+    let mut f = set_up(CONFIG);
+    let output = f.niri_output(1);
+    f.niri().seat.add_touch();
+    open_ui(&mut f);
+    select(&mut f, &output, (0, 0), (959, 719));
+    f.niri().screenshot_ui.set_tool(Tool::Draw);
+    let before = capture(&mut f);
+    let touch = |x, y| TestTouchEvent {
+        slot: Some(0).into(),
+        position: (x / 960., y / 720.),
+    };
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchDown {
+            event: touch(300., 250.),
+        });
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchMotion {
+            event: touch(400., 300.),
+        });
+    assert!(f.niri().screenshot_ui.has_active_gesture());
+
+    let tooltips = !with_editor(&mut f, |e| e.settings.tooltips.enabled);
+    f.niri().config.borrow_mut().screenshot.tooltips.enabled = tooltips;
+    f.niri()
+        .screenshot_ui
+        .refresh_config(niri_config::ModKey::Super);
+    assert_ne!(
+        with_editor(&mut f, |e| e.settings.tooltips.enabled),
+        tooltips
+    );
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchCancel {
+            event: touch(400., 300.),
+        });
+    assert!(!f.niri().screenshot_ui.has_active_gesture());
+    assert_eq!(
+        with_editor(&mut f, |e| e.settings.tooltips.enabled),
+        tooltips
+    );
+    assert_eq!(capture(&mut f), before);
+
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchDown {
+            event: touch(500., 450.),
+        });
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchMotion {
+            event: touch(600., 450.),
+        });
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchUp {
+            event: touch(600., 450.),
+        });
+    let (size, pixels) = capture(&mut f);
+    assert!(has_color_near(
+        size,
+        &pixels,
+        550,
+        450,
+        1,
+        [255, 0, 0, 255],
+        2
+    ));
+    assert_eq!(px(size, &pixels, 350, 275), px(size, &before.1, 350, 275));
+    command(&mut f, Action::ScreenshotUndo);
+    assert_eq!(capture(&mut f), before);
+}
+
+#[test]
+fn screenshot_editor_touch_cancel_restores_crop_and_preserves_mouse_gesture() {
+    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
+    use smithay::backend::input::InputEvent;
+
+    let mut f = set_up(CONFIG);
+    let output = f.niri_output(1);
+    f.niri().seat.add_touch();
+    open_ui(&mut f);
+    select(&mut f, &output, (100, 100), (800, 600));
+    let before = capture(&mut f);
+    let touch = |x, y| TestTouchEvent {
+        slot: Some(0).into(),
+        position: (x / 960., y / 720.),
+    };
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchDown {
+            event: touch(300., 250.),
+        });
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchMotion {
+            event: touch(400., 350.),
+        });
+    assert!(f.niri().screenshot_ui.has_active_gesture());
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchCancel {
+            event: touch(400., 350.),
+        });
+    assert_eq!(capture(&mut f), before);
+
+    f.niri().screenshot_ui.set_tool(Tool::Draw);
+    f.niri()
+        .screenshot_ui
+        .pointer_down(output, (300, 300).into(), None, false);
+    f.niri()
+        .screenshot_ui
+        .pointer_motion((500, 400).into(), None);
+    f.niri_state()
+        .process_input_event::<TestInputBackend>(InputEvent::TouchCancel {
+            event: touch(400., 350.),
+        });
+    assert!(f.niri().screenshot_ui.has_active_gesture());
+    assert_eq!(
+        f.niri().screenshot_ui.pointer_up(None),
+        Some(EditorOutcome::Changed)
+    );
+    let (size, pixels) = capture(&mut f);
+    assert!(has_color_near(
+        size,
+        &pixels,
+        300,
+        250,
+        1,
+        [255, 0, 0, 255],
+        2
+    ));
+}

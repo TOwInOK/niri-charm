@@ -5831,6 +5831,9 @@ impl State {
         handle.frame(self);
     }
     fn on_touch_cancel<I: InputBackend>(&mut self, _evt: I::TouchCancelEvent) {
+        if self.niri.screenshot_ui.cancel_touch() {
+            self.niri.queue_redraw_all();
+        }
         let Some(handle) = self.niri.seat.get_touch() else {
             return;
         };
