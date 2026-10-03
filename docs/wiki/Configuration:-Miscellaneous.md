@@ -136,10 +136,11 @@ Niri will create the last folder of the path if it doesn't exist.
 screenshot-path "~/Pictures/Screenshots/Screenshot from %Y-%m-%d %H-%M-%S.{ext}"
 ```
 
-`{ext}` expands to the chosen file format. Existing templates ending in `.png`
-also work: their extension is replaced with the chosen format. A template
-without an extension gets one appended. Explicit action/IPC `path` arguments
-remain literal: a conflicting extension is rejected, not silently renamed.
+`{ext}` expands to the chosen file format. Existing `.png`, `.webp` and `.avif`
+extensions (case-insensitive) are replaced with the chosen format. Otherwise,
+the extension is appended: dots in a name such as `shot-%H.%M.%S` retain all
+timestamp components. Explicit action/IPC `path` arguments remain literal:
+a conflicting extension is rejected, not silently renamed.
 
 You can also set this option to `null` to disable saving screenshots to disk.
 

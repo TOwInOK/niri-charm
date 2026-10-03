@@ -349,7 +349,17 @@ pub fn make_screenshot_path(
     if let Some(expanded) = expand_home(&path).context("error expanding ~")? {
         path = expanded;
     }
-    path.set_extension(image_format.extension());
+    if path.extension().and_then(OsStr::to_str).is_some_and(|ext| {
+        ["png", "webp", "avif"]
+            .iter()
+            .any(|known| ext.eq_ignore_ascii_case(known))
+    }) {
+        path.set_extension(image_format.extension());
+    } else {
+        // A dotted timestamp is part of the name, not an image extension.
+        path.as_mut_os_string().push(".");
+        path.as_mut_os_string().push(image_format.extension());
+    }
 
     Ok(Some(path))
 }
@@ -668,6 +678,9 @@ mod tests {
             ("/shots/capture.png", "/shots/capture.webp"),
             ("/shots/{ext}/capture.{ext}", "/shots/webp/capture.webp"),
             ("/shots/capture", "/shots/capture.webp"),
+            ("/shots/capture.01", "/shots/capture.01.webp"),
+            ("/shots/capture.02", "/shots/capture.02.webp"),
+            ("/shots/capture.PNG", "/shots/capture.webp"),
         ] {
             let config = Config::parse_mem(&format!("screenshot-path {template:?}")).unwrap();
             assert_eq!(
