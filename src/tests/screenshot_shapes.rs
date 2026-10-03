@@ -620,3 +620,36 @@ fn axes_hold_ends_when_virtual_pointer_is_destroyed_without_release() {
         2
     ));
 }
+
+#[test]
+fn axes_reanchor_uses_the_visible_arrow_endpoint() {
+    for (before_toggle, after_toggle, endpoint) in [(250, 350, 150), (50, 150, 100)] {
+        let mut f = set_up(CONFIG);
+        let output = f.niri_output(1);
+        open_ui(&mut f);
+        select(&mut f, &output, (0, 0), (959, 719));
+        f.niri().screenshot_ui.set_tool(Tool::Arrow);
+        command(&mut f, Action::ScreenshotSetAxes { enabled: true });
+        f.niri()
+            .screenshot_ui
+            .pointer_down(output.clone(), (100, 100).into(), None, false);
+        f.niri()
+            .screenshot_ui
+            .pointer_motion((550, 300).into(), None);
+        command(&mut f, Action::ScreenshotSetAxes { enabled: false });
+        f.niri()
+            .screenshot_ui
+            .pointer_motion((550, before_toggle).into(), None);
+        command(&mut f, Action::ScreenshotSetAxes { enabled: true });
+        f.niri()
+            .screenshot_ui
+            .pointer_motion((550, after_toggle).into(), None);
+        f.niri().screenshot_ui.pointer_up(None);
+        let actual = capture(&mut f);
+
+        command(&mut f, Action::ScreenshotUndo);
+        command(&mut f, Action::ScreenshotSetAxes { enabled: false });
+        gesture(&mut f, &output, &[(100, 100), (550, endpoint)]);
+        assert_eq!(actual, capture(&mut f));
+    }
+}

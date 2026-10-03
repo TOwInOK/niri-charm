@@ -1569,16 +1569,16 @@ impl ScreenshotUi {
             if matches!(interaction, Interaction::Canvas { .. }) {
                 let point = if matches!(interaction, Interaction::Canvas { slot: owner, .. } if *owner == slot)
                 {
-                    let projected =
-                        axes.project(point, editor.settings.axes.switch_threshold * data.scale);
+                    let projected = axes.project(
+                        point,
+                        editor.settings.axes.switch_threshold * data.scale,
+                        data.size,
+                    );
                     if let Some(corner) = axes.take_corner() {
                         data.canvas
                             .damage(Editor::motion(interaction, corner, slot));
                     }
-                    Point::from((
-                        projected.x.clamp(0, data.size.w - 1),
-                        projected.y.clamp(0, data.size.h - 1),
-                    ))
+                    projected
                 } else {
                     point
                 };

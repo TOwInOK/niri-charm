@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use smithay::input::keyboard::Keycode;
-use smithay::utils::{Physical, Point};
+use smithay::utils::{Physical, Point, Rectangle, Size};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HoldButton {
@@ -132,14 +132,21 @@ impl Axes {
         self.projection.as_ref().map(|p| p.point)
     }
 
-    pub fn project(&mut self, raw: Point<i32, Physical>, threshold: f64) -> Point<i32, Physical> {
+    pub fn project(
+        &mut self,
+        raw: Point<i32, Physical>,
+        threshold: f64,
+        size: Size<i32, Physical>,
+    ) -> Point<i32, Physical> {
         let Some(p) = &mut self.projection else {
             return raw;
         };
+        let bounds = Rectangle::from_size(size - Size::from((1, 1)));
         let dx = raw.x.saturating_sub(p.raw.x);
         let dy = raw.y.saturating_sub(p.raw.y);
         if !p.constrained {
-            p.point = (p.anchor.x.saturating_add(dx), p.anchor.y.saturating_add(dy)).into();
+            p.point = Point::from((p.anchor.x.saturating_add(dx), p.anchor.y.saturating_add(dy)))
+                .constrain(bounds);
             return p.point;
         }
         p.via = None;
@@ -175,7 +182,8 @@ impl Axes {
             Some(Ray::Right | Ray::Left) => (p.anchor.x.saturating_add(dx), p.anchor.y).into(),
             Some(Ray::Up | Ray::Down) => (p.anchor.x, p.anchor.y.saturating_add(dy)).into(),
             None => p.anchor,
-        };
+        }
+        .constrain(bounds);
         p.point
     }
 }
@@ -189,12 +197,21 @@ mod tests {
         let mut axes = Axes::default();
         axes.set_enabled(true, None);
         axes.begin((100, 100).into(), true);
-        assert_eq!(axes.project((200, 120).into(), 8.), (200, 100).into());
+        assert_eq!(
+            axes.project((200, 120).into(), 8., (800, 600).into()),
+            (200, 100).into()
+        );
         axes.set_enabled(false, Some((200, 120).into()));
-        assert_eq!(axes.project((200, 120).into(), 8.), (200, 100).into());
+        assert_eq!(
+            axes.project((200, 120).into(), 8., (800, 600).into()),
+            (200, 100).into()
+        );
         axes.set_enabled(true, Some((200, 120).into()));
         assert_eq!(axes.origin(), Some((200, 100).into()));
-        assert_eq!(axes.project((203, 220).into(), 8.), (200, 200).into());
+        assert_eq!(
+            axes.project((203, 220).into(), 8., (800, 600).into()),
+            (200, 200).into()
+        );
     }
 
     #[test]
@@ -202,9 +219,18 @@ mod tests {
         let mut axes = Axes::default();
         axes.set_enabled(true, None);
         axes.begin((100, 100).into(), true);
-        assert_eq!(axes.project((180, 101).into(), 8.), (180, 100).into());
-        assert_eq!(axes.project((97, 98).into(), 8.), (100, 100).into());
-        assert_eq!(axes.project((97, 70).into(), 8.), (100, 70).into());
+        assert_eq!(
+            axes.project((180, 101).into(), 8., (800, 600).into()),
+            (180, 100).into()
+        );
+        assert_eq!(
+            axes.project((97, 98).into(), 8., (800, 600).into()),
+            (100, 100).into()
+        );
+        assert_eq!(
+            axes.project((97, 70).into(), 8., (800, 600).into()),
+            (100, 70).into()
+        );
         axes.end();
         assert!(axes.origin().is_none());
     }
@@ -229,7 +255,10 @@ mod tests {
         let mut axes = Axes::default();
         axes.pointer_hold(HoldButton::Pointer(2), true, None);
         axes.begin((100, 100).into(), true);
-        assert_eq!(axes.project((160, 103).into(), 8.), (160, 100).into());
+        assert_eq!(
+            axes.project((160, 103).into(), 8., (800, 600).into()),
+            (160, 100).into()
+        );
         axes.pointer_hold(HoldButton::Pointer(1), false, None);
         axes.pointer_hold(HoldButton::Tablet(2), false, None);
         assert!(axes.enabled());
