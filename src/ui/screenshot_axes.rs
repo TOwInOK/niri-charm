@@ -80,6 +80,16 @@ impl Axes {
         }
     }
 
+    pub fn clear_holds(&mut self, raw: Option<Point<i32, Physical>>) -> bool {
+        if self.held_keys.is_empty() && self.held_buttons.is_empty() {
+            return false;
+        }
+        self.held_keys.clear();
+        self.held_buttons.clear();
+        self.reanchor(raw);
+        true
+    }
+
     fn reanchor(&mut self, raw: Option<Point<i32, Physical>>) {
         let enabled = self.enabled();
         if let Some(projection) = &mut self.projection {

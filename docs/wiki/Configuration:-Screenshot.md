@@ -197,6 +197,8 @@ Before drawing, the intersection follows the pointer. Pressing the mouse anchors
 
 Hold also supports a mouse or stylus button. It ends only when that same physical control is released; releasing another button does not disable it. With multiple hold controls, the mode remains enabled until all are released. Bare modifier triggers such as `Shift_L` are supported for this action without changing ordinary key-binding matching.
 
+Lost releases are handled conservatively: removing a device (including a virtual pointer), switching VT, suspending, or losing nested-window focus clears temporary axes holds, while preserving the explicit toggle state.
+
 `hold` defaults to `false`. It is a local bind property, not an IPC argument: IPC `screenshot-toggle-axes` always toggles. Hold requires a physical release event, so wheel and touchpad scroll triggers are rejected. Held actions do not repeat even when the bind enables repeat.
 
 ```kdl

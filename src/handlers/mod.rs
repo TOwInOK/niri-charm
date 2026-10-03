@@ -79,7 +79,7 @@ use crate::protocols::mutter_x11_interop::MutterX11InteropHandler;
 use crate::protocols::output_management::{OutputManagementHandler, OutputManagementManagerState};
 use crate::protocols::screencopy::{Screencopy, ScreencopyHandler, ScreencopyManagerState};
 use crate::protocols::virtual_pointer::{
-    VirtualPointerAxisEvent, VirtualPointerButtonEvent, VirtualPointerHandler,
+    VirtualPointer, VirtualPointerAxisEvent, VirtualPointerButtonEvent, VirtualPointerHandler,
     VirtualPointerInputBackend, VirtualPointerManagerState, VirtualPointerMotionAbsoluteEvent,
     VirtualPointerMotionEvent,
 };
@@ -661,6 +661,11 @@ impl ScreencopyHandler for State {
 impl VirtualPointerHandler for State {
     fn virtual_pointer_manager_state(&mut self) -> &mut VirtualPointerManagerState {
         &mut self.niri.virtual_pointer_state
+    }
+    fn destroy_virtual_pointer(&mut self, pointer: VirtualPointer) {
+        self.process_input_event(InputEvent::<VirtualPointerInputBackend>::DeviceRemoved {
+            device: pointer,
+        });
     }
 
     fn on_virtual_pointer_motion(&mut self, event: VirtualPointerMotionEvent) {

@@ -320,6 +320,14 @@ impl ScreenshotUi {
             editor.axes_enabled = axes.enabled();
         }
     }
+    pub fn clear_axes_holds(&mut self) -> bool {
+        let Self::Open { axes, editor, .. } = self else {
+            return false;
+        };
+        let changed = axes.clear_holds(editor.pointer.as_ref().map(|(_, p)| *p));
+        editor.axes_enabled = axes.enabled();
+        changed
+    }
 
     pub fn toggle_pointer(&mut self) {
         if let Self::Open { show_pointer, .. } = self {

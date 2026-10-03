@@ -153,6 +153,7 @@ impl Winit {
                     // it stuck.
                     if !focused {
                         state.cancel_zoom_hold_immediate();
+                        state.cancel_screenshot_axes_holds();
                     }
                 }
                 WinitEvent::Redraw => state.niri.queue_redraw(&state.backend.winit().output),

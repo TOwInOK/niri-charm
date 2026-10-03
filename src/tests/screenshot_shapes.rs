@@ -540,3 +540,83 @@ fn shapes_and_guides_preserve_frozen_coordinates_across_scale_and_rotation() {
         assert_eq!(capture(&mut f).1, rectangle);
     }
 }
+
+#[test]
+fn axes_holds_end_on_device_removal_without_changing_toggle() {
+    use crate::tests::test_input_backend::{TestInputBackend, TestInputDevice};
+    use crate::ui::screenshot_axes::HoldButton;
+    use smithay::backend::input::InputEvent;
+
+    let mut f = set_up(CONFIG);
+    let output = f.niri_output(1);
+    open_ui(&mut f);
+    select(&mut f, &output, (0, 0), (959, 719));
+    for toggled in [false, true] {
+        command(&mut f, Action::ScreenshotSetAxes { enabled: toggled });
+        f.niri().screenshot_ui.begin_axes_hold(42u32.into());
+        f.niri()
+            .screenshot_ui
+            .set_axes_hold(HoldButton::Pointer(273), true);
+        assert!(with_editor(&mut f, |e| e.axes_enabled));
+        f.niri_state()
+            .process_input_event::<TestInputBackend>(InputEvent::DeviceRemoved {
+                device: TestInputDevice,
+            });
+        assert_eq!(with_editor(&mut f, |e| e.axes_enabled), toggled);
+        command(&mut f, Action::ScreenshotSetAxes { enabled: false });
+        assert!(!with_editor(&mut f, |e| e.axes_enabled));
+    }
+    f.niri().screenshot_ui.set_tool(Tool::Draw);
+    gesture(&mut f, &output, &[(300, 400), (600, 550)]);
+    let (size, pixels) = capture(&mut f);
+    assert!(has_color_near(
+        size,
+        &pixels,
+        450,
+        475,
+        1,
+        [255, 0, 0, 255],
+        2
+    ));
+    assert!(!near(px(size, &pixels, 450, 400), [255, 0, 0, 255], 2));
+}
+
+#[test]
+fn axes_hold_ends_when_virtual_pointer_is_destroyed_without_release() {
+    use wayland_client::protocol::wl_pointer;
+
+    let mut f = set_up(&format!(
+        r#"{CONFIG}
+        binds {{ MouseRight {{ screenshot-toggle-axes hold=true; }}; }}"#
+    ));
+    let output = f.niri_output(1);
+    let id = f.add_client();
+    let client = f.client(id);
+    let pointer = client
+        .state
+        .virtual_pointer_manager
+        .as_ref()
+        .unwrap()
+        .create_virtual_pointer(None, &client.qh, ());
+    open_ui(&mut f);
+    select(&mut f, &output, (0, 0), (959, 719));
+    f.niri().screenshot_ui.set_tool(Tool::Draw);
+    pointer.button(0, 273, wl_pointer::ButtonState::Pressed);
+    pointer.frame();
+    f.roundtrip(id);
+    assert!(with_editor(&mut f, |e| e.axes_enabled));
+    pointer.destroy();
+    f.roundtrip(id);
+    assert!(!with_editor(&mut f, |e| e.axes_enabled));
+    gesture(&mut f, &output, &[(300, 400), (600, 550)]);
+    let (size, pixels) = capture(&mut f);
+    assert!(has_color_near(
+        size,
+        &pixels,
+        450,
+        475,
+        1,
+        [255, 0, 0, 255],
+        2
+    ));
+}

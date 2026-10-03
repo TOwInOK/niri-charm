@@ -370,12 +370,19 @@ impl State {
         }
     }
 
+    pub(crate) fn cancel_screenshot_axes_holds(&mut self) {
+        if self.niri.screenshot_ui.clear_axes_holds() {
+            self.niri.queue_redraw_all();
+        }
+    }
+
     fn on_device_removed(&mut self, device: impl Device) {
         // The removed device may never deliver the release that would end an
         // active zoom hold. The session does not track which device its
         // trigger came from, so any removal ends it. This is a lost-release
         // cleanup, so the restore is immediate.
         self.cancel_zoom_hold_immediate();
+        self.cancel_screenshot_axes_holds();
         self.end_zoom_lock_hold();
 
         // The removed device may never deliver the pinch end that would
@@ -915,6 +922,7 @@ impl State {
                 // for an animation to complete on.
                 self.niri.suppressed_keys.clear();
                 self.cancel_zoom_hold_immediate();
+                self.cancel_screenshot_axes_holds();
                 self.end_zoom_lock_hold();
                 self.commit_zoom_pinch();
             }
@@ -923,6 +931,7 @@ impl State {
                 // Suspend may not deliver the key releases, so clear the state.
                 self.niri.suppressed_keys.clear();
                 self.cancel_zoom_hold_immediate();
+                self.cancel_screenshot_axes_holds();
                 self.end_zoom_lock_hold();
                 self.commit_zoom_pinch();
             }
