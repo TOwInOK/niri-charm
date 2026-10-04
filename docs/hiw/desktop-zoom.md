@@ -16,6 +16,7 @@ Paths below are relative to the repository root.
 | Input               | `src/input/mod.rs`                                                   | Actions, hold sessions, pinch protocol routing, Overview entry and pointer rebasing       |
 | Presentation        | `src/niri.rs`                                                        | Separate scene/pointer transforms, hit testing, rendering and per-frame tracking          |
 | Geometry primitive  | `src/utils/view.rs`                                                  | `ViewportTransform` and inverse mapping                                                   |
+| Scene rasterization | `src/render_helpers/viewport.rs`                                    | Fractional focal rescaling with final physical-geometry rounding                         |
 | Grabs               | `src/input/{move_grab,spatial_movement_grab,touch_overview_grab}.rs` | Convert pointer positions and deltas to scene coordinates                                 |
 | Diagnostics         | `src/ui/zoom_debug.rs`                                               | Passive screen-space overlay                                                              |
 | Public interfaces   | `niri-config`, `niri-ipc`, `src/ipc/server.rs`                       | Configuration/actions and derived IPC state                                               |
@@ -76,6 +77,8 @@ For an output-local point, the basic transform is:
 `display = focal + (content - focal) * factor`
 
 `ViewportTransform` supplies forward/inverse point and rectangle mapping. At factor 1 it is identity regardless of focal. Global coordinates additionally include the output origin.
+
+Scene rendering keeps the focal point in fractional physical coordinates. `ViewportRenderElement` applies the complete transform before rounding the resulting geometry; rounding the focal first would magnify its error by `factor - 1` and make touch/tablet hit testing disagree with visible surface edges.
 
 Do not assume that the canonical pointer and the scene always share a coordinate space:
 

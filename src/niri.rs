@@ -171,6 +171,7 @@ use crate::render_helpers::sampling::SamplingRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::surface::push_elements_from_surface_tree;
 use crate::render_helpers::texture::TextureBuffer;
+use crate::render_helpers::viewport::ViewportRenderElement;
 use crate::render_helpers::xray::{Xray, XrayPos};
 use crate::render_helpers::{
     encompassing_geo, render_to_dmabuf, render_to_encompassing_texture, render_to_shm,
@@ -4931,9 +4932,7 @@ impl Niri {
         // post-close camera tail), the desktop zoom transform otherwise.
         // Identity means elements are pushed without a wrapper.
         let scene_transform = self.scene_presentation_transform(output);
-        let scene_origin = scene_transform
-            .focal()
-            .to_physical_precise_round(output_scale);
+        let scene_origin = scene_transform.focal().to_physical(output_scale);
         let scene_scale = scene_transform.factor();
         // Include Overview's base scale, not just its outer handoff correction.
         let nearest = self
@@ -5045,7 +5044,7 @@ impl Niri {
                 if scene_scale == 1. && !nearest {
                     push(elem.into());
                 } else {
-                    let elem = RescaleRenderElement::from_element(elem, scene_origin, scene_scale);
+                    let elem = ViewportRenderElement::new(elem, scene_origin, scene_scale);
                     let elem = SamplingRenderElement::new(elem, nearest);
                     push(elem.into());
                 }
@@ -7738,20 +7737,20 @@ niri_render_elements! {
             SolidColorRenderElement
         >>>,
         // Scene presentation is independent of screen-space UI.
-        ZoomedMonitor = SamplingRenderElement<RescaleRenderElement<MonitorRenderElement<R>>>,
-        ZoomedRescaledTile = SamplingRenderElement<RescaleRenderElement<RescaleRenderElement<TileRenderElement<R>>>>,
-        ZoomedLayerSurface = SamplingRenderElement<RescaleRenderElement<LayerSurfaceRenderElement<R>>>,
-        ZoomedRelocatedLayerSurface = SamplingRenderElement<RescaleRenderElement<
+        ZoomedMonitor = SamplingRenderElement<ViewportRenderElement<MonitorRenderElement<R>>>,
+        ZoomedRescaledTile = SamplingRenderElement<ViewportRenderElement<RescaleRenderElement<TileRenderElement<R>>>>,
+        ZoomedLayerSurface = SamplingRenderElement<ViewportRenderElement<LayerSurfaceRenderElement<R>>>,
+        ZoomedRelocatedLayerSurface = SamplingRenderElement<ViewportRenderElement<
             CropRenderElement<RelocateRenderElement<RescaleRenderElement<
                 LayerSurfaceRenderElement<R>
             >>>,
         >>,
-        ZoomedRelocatedColor = SamplingRenderElement<RescaleRenderElement<
+        ZoomedRelocatedColor = SamplingRenderElement<ViewportRenderElement<
             CropRenderElement<RelocateRenderElement<RescaleRenderElement<
                 SolidColorRenderElement
             >>>,
         >>,
-        ZoomedSolidColor = SamplingRenderElement<RescaleRenderElement<SolidColorRenderElement>>,
+        ZoomedSolidColor = SamplingRenderElement<ViewportRenderElement<SolidColorRenderElement>>,
         SamplingDamage = ExtraDamage,
         Pointer = PointerRenderElements<R>,
         Wayland = WaylandSurfaceRenderElement<R>,

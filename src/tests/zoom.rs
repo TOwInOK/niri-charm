@@ -743,7 +743,8 @@ fn zoom_debug_hidden_by_screenshot_ui() {
     let mut f = set_up_debug();
     let output = f.niri_output(1);
 
-    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
+    f.niri_state()
+        .open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
     assert!(f.niri().screenshot_ui.is_open());
 
     let elements = render_elements(f.niri_state(), &output, RenderTarget::Output);
@@ -1304,6 +1305,63 @@ fn global_output_bounds(f: &mut Fixture) -> Rectangle<i32, Logical> {
         Point::from((min_x, min_y)),
         Size::from((max_x - min_x, max_y - min_y)),
     )
+}
+
+#[test]
+fn zoom_fractional_focal_touch_hits_rendered_edge() {
+    use smithay::backend::input::InputEvent;
+
+    use super::client::LayerMargin;
+    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
+
+    for scale in [1., 1.5] {
+        for level in [1.5, 4., 10.] {
+            let config = format!("{CONFIG}\noutput \"headless-1\" {{ scale {scale}; }}");
+            let mut f = set_up_with_config(&config);
+            let output = f.niri_output(1);
+            let id = f.add_client();
+            let layer = f.client(id).create_layer(None, Layer::Top, "zoom-edge");
+            let surface = layer.surface.clone();
+            layer.set_configure_props(LayerConfigureProps {
+                size: Some((10, 100)),
+                anchor: Some(Anchor::Top | Anchor::Left),
+                margin: Some(LayerMargin {
+                    top: 300,
+                    left: 900,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+            layer.commit();
+            f.roundtrip(id);
+            let layer = f.client(id).layer(&surface);
+            layer.attach_new_buffer_with_color(u32::MAX, 0, 0, u32::MAX);
+            layer.set_size(10, 100);
+            layer.ack_last_and_commit();
+            f.double_roundtrip(id);
+
+            f.niri_state().move_cursor(Point::from((900.51, 350.)));
+            set_zoom(&mut f, &output, level, Point::from((900.51, 350.)));
+            let (size, pixels) = render_output_rgba(f.niri_state(), &output);
+            let edge = color_bbox(&pixels, size, [255, 0, 0]).unwrap();
+            let display = Point::<f64, Logical>::from(((edge.loc.x as f64 + 0.5) / scale, 350.));
+            let extent = f.niri().global_space.output_geometry(&output).unwrap().size;
+            let touch = f.niri().seat.add_touch();
+            f.niri_state()
+                .process_input_event::<TestInputBackend>(InputEvent::TouchDown {
+                    event: TestTouchEvent {
+                        slot: Some(0).into(),
+                        position: (display.x / extent.w as f64, display.y / extent.h as f64),
+                    },
+                });
+            let start = touch.grab_start_data().unwrap();
+            assert!(
+                start.focus.is_some(),
+                "touch misses a visible edge pixel: scale={scale}, zoom={level}, display={display:?}, content={:?}, edge={edge:?}",
+                start.location,
+            );
+        }
+    }
 }
 
 #[test]
@@ -3032,7 +3090,8 @@ fn zoom_hold_release_not_gated_by_screenshot_ui() {
 
     // Open the screenshot UI during the hold; the release is a cleanup path,
     // not a new action, so it must not be blocked by the UI allow-list.
-    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
+    f.niri_state()
+        .open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
     assert!(f.niri().screenshot_ui.is_open());
 
     hold_release(&mut f, trigger);
@@ -4992,7 +5051,8 @@ fn zoom_anim_hold_screenshot_ui_release() {
 
     // The release is a cleanup path, not a new action: the screenshot UI
     // allow-list must not block the animated restore.
-    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
+    f.niri_state()
+        .open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
     assert!(f.niri().screenshot_ui.is_open());
 
     hold_release(&mut f, trigger);
@@ -6067,7 +6127,8 @@ fn zoom_screenshot_ui_pointer_down_uses_displayed_coordinates() {
         [0xff, 0, 0, 0xff],
     );
     set_zoom(&mut f, &output, 2., Point::from((100., 100.)));
-    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
+    f.niri_state()
+        .open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
 
     let canonical = Point::from((150., 100.));
     let displayed = f.niri().display_position_for_content(canonical);
@@ -6930,7 +6991,8 @@ fn zoom_pinch_claim_gates() {
 #[test]
 fn zoom_pinch_claim_blocked_by_screenshot_ui() {
     let mut f = set_up_with_pinch();
-    f.niri_state().open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
+    f.niri_state()
+        .open_screenshot_ui(true, None, niri_ipc::ScreenshotTool::Select);
     assert!(f.niri().screenshot_ui.is_open());
 
     assert!(!f.niri_state().can_claim_zoom_pinch(3));
