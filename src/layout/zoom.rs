@@ -1198,6 +1198,52 @@ impl OutputZoomState {
         self.start_command(level, anchor, clock, config, CommandDirection::Value);
     }
 
+    /// Applies a lowered maximum to the entire active trajectory, not just its current sample.
+    pub fn clamp_max_level(
+        &mut self,
+        max_level: f64,
+        anchor: Point<f64, Logical>,
+        clock: &Clock,
+        config: niri_config::Animation,
+    ) -> bool {
+        let level = self.level();
+        let target = self.target_level();
+        if level <= max_level && target <= max_level {
+            // Non-monotonic easing can revisit the start even after both the
+            // current sample and destination are below the new maximum.
+            let start_exceeds_max = match self {
+                Self::Zooming {
+                    zooming: ZoomingState::Restore(r),
+                    ..
+                } => r.from_level > max_level,
+                _ => self
+                    .animation()
+                    .is_some_and(|a| a.from() > max_level.log2()),
+            };
+            if !start_exceeds_max {
+                return false;
+            }
+        }
+
+        if level > max_level {
+            self.set_level_immediate(max_level, anchor);
+        } else if let Self::Zooming {
+            zooming: ZoomingState::Restore(r),
+            ..
+        } = self
+        {
+            let snapshot = ZoomSnapshot {
+                level: r.to_level.min(max_level),
+                target_level: r.to_level.min(max_level),
+                focal: r.to_focal,
+            };
+            self.restore_animated(snapshot, clock, config);
+        } else {
+            self.set_target_level(target.min(max_level), anchor, clock, config);
+        }
+        true
+    }
+
     /// Activates a pointer-anchored preset and locks its camera immediately.
     /// No intermediate unlocked state is presented.
     pub fn set_target_level_and_lock(

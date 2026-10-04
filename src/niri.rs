@@ -3936,29 +3936,13 @@ impl Niri {
         let outputs: Vec<Output> = self.global_space.outputs().cloned().collect();
         for output in outputs {
             let needs_redraw = if let Some(mon) = self.layout.monitor_for_output_mut(&output) {
-                let view_size = mon.view_size();
-                let zoom = mon.zoom();
-                if zoom.level() > max_zoom || zoom.target_level() > max_zoom {
-                    let anchor = if pointer_output.as_ref() == Some(&output) {
-                        let geom = self.global_space.output_geometry(&output).unwrap();
-                        pointer_pos.unwrap() - geom.loc.to_f64()
-                    } else {
-                        view_size.to_point().downscale(2.)
-                    };
-
-                    if zoom.level() > max_zoom {
-                        // The displayed level is above the new maximum: clamp
-                        // immediately, cancelling any transition.
-                        mon.zoom_mut().set_level_immediate(max_zoom, anchor);
-                    } else {
-                        // Only the target exceeds the maximum: retarget the
-                        // in-progress transition (or start one) towards it.
-                        mon.zoom_to(max_zoom, anchor);
-                    }
-                    true
+                let anchor = if pointer_output.as_ref() == Some(&output) {
+                    let geom = self.global_space.output_geometry(&output).unwrap();
+                    pointer_pos.unwrap() - geom.loc.to_f64()
                 } else {
-                    false
-                }
+                    mon.view_size().to_point().downscale(2.)
+                };
+                mon.clamp_zoom_to_max(max_zoom, anchor)
             } else {
                 false
             };

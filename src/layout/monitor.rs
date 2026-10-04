@@ -2509,6 +2509,12 @@ impl<W: LayoutElement> Monitor<W> {
         self.zoom.set_target_level(level, anchor, &clock, config);
     }
 
+    /// Clamps the displayed zoom and any active trajectory to a lowered maximum.
+    pub fn clamp_zoom_to_max(&mut self, max_level: f64, anchor: Point<f64, Logical>) -> bool {
+        self.zoom
+            .clamp_max_level(max_level, anchor, &self.clock, self.options.animations.zoom.0)
+    }
+
     /// Activates a pointer-anchored zoom preset with tracking locked immediately.
     pub fn zoom_to_and_lock(&mut self, level: f64, anchor: Point<f64, Logical>) {
         let clock = self.clock.clone();

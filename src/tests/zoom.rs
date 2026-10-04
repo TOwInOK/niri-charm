@@ -4406,6 +4406,58 @@ fn zoom_anim_max_reload_retargets() {
 }
 
 #[test]
+fn zoom_reload_nonmonotonic_transition_stays_below_max() {
+    let animation = r#"animations { zoom { duration-ms 1000; curve "cubic-bezier" 0.3333333333333333 3.0 0.6666666666666666 -3.0; }; }"#;
+    for locked in [false, true] {
+        for restore in [false, true] {
+            let mut f = set_up_with_config(&format!("{ANIMATED_CONFIG}\n{animation}"));
+            let output = f.niri_output(1);
+            let anchor = Point::from((960., 360.));
+            f.niri_state().move_cursor(anchor);
+            freeze_clock(&mut f);
+            set_zoom(&mut f, &output, 8., anchor);
+            let saved = crate::layout::zoom::ZoomSnapshot {
+                level: 2.,
+                target_level: 2.,
+                focal: Point::from((700., 300.)),
+            };
+            let mon = f.niri().layout.monitor_for_output_mut(&output).unwrap();
+            mon.zoom_mut().set_locked(locked, anchor);
+            if restore {
+                mon.zoom_restore(saved);
+            } else {
+                mon.zoom_to(2., anchor);
+            }
+            advance_clock(&mut f, 200);
+            let before = zoom_transform(&mut f, &output);
+            assert!((2. ..3.).contains(&zoom_level(&mut f, &output)));
+            let config = niri_config::Config::parse_mem(&format!(
+                "{ANIMATED_CONFIG}\n{animation}\nzoom {{ max-zoom 3; }}"
+            ))
+            .unwrap();
+            f.niri_state().reload_config(Ok(config));
+            let after = zoom_transform(&mut f, &output);
+            assert_abs_diff_eq!(before.factor(), after.factor(), epsilon = 1e-9);
+            assert_abs_diff_eq!(before.focal().x, after.focal().x, epsilon = 1e-9);
+            assert_abs_diff_eq!(before.focal().y, after.focal().y, epsilon = 1e-9);
+            for _ in 0..110 {
+                advance_clock(&mut f, 10);
+                let level = zoom_level(&mut f, &output);
+                assert!(
+                    (1. ..=3.).contains(&level),
+                    "locked={locked} restore={restore} level={level}"
+                );
+            }
+            assert_eq!(zoom_level(&mut f, &output), 2.);
+            assert_eq!(zoom_locked(&mut f, &output), locked);
+            if restore && !locked {
+                assert_eq!(zoom_focal(&mut f, &output), saved.focal);
+            }
+        }
+    }
+}
+
+#[test]
 fn zoom_anim_config_reload_applies_to_next_retarget() {
     let mut f = set_up_animated();
     let output = f.niri_output(1);

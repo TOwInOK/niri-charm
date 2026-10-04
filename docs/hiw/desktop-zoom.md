@@ -231,7 +231,7 @@ The debug overlay is a passive reader: deadzone outline and focal marker, screen
 - `zoom-lock hold=true` temporarily inverts lock state; release restores it. `zoom hold=true` restores the previous view, with optional pointer-anchored locking via `lock=true`.
 - Hold actions requiring a physical release are bind-only, not IPC actions. Wheel triggers cannot provide that lifecycle.
 - The target is the output under the canonical pointer, falling back to the active output. Hold release uses its session's owning output.
-- Reducing `max-zoom` on config reload clamps existing Zoom state immediately, including locked outputs.
+- Reducing `max-zoom` on config reload clamps a displayed level above the maximum immediately, including locked outputs. Otherwise, any command or Restore whose destination or original start exceeds the new maximum is restarted from the current displayed view with bounded endpoints. Restore retains its saved focal destination. This prevents non-monotonic easing from revisiting an obsolete, larger starting level without introducing a jump when the current view is already in range.
 
 `niri msg zoom` returns per-output `ZoomState` through `src/ipc/server.rs`:
 
