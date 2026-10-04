@@ -1787,7 +1787,8 @@ impl OutputZoomState {
 
         let dt = now.saturating_sub(follow.last_step).as_secs_f64();
         follow.last_step = now;
-        let distance = input.speed * dt;
+        // At a fixed level, moving the focal moves displayed content by (level - 1).
+        let distance = input.speed * dt / (view.level - 1.);
         let remaining = target - view.focal;
         let rem_len = (remaining.x * remaining.x + remaining.y * remaining.y).sqrt();
 
@@ -3747,6 +3748,51 @@ mod tests {
         let after = state.viewport_transform().apply(cursor);
         let d = after - before;
         (d.x * d.x + d.y * d.y).sqrt()
+    }
+
+    #[test]
+    fn follow_speed_uses_displayed_units_at_every_zoom() {
+        for level in [1.5, 2., 4., 8.] {
+            let mut state = state_at(level, Point::from((960., 540.)), Size::from((1920., 1080.)));
+            let cursor = state
+                .viewport_transform()
+                .apply_inverse(Point::from((1680., 540.)));
+            let mut clock = test_clock();
+            follow(&mut state, cursor, 0.5, &clock, test_anim_config());
+            let step = follow_display_step(&mut state, cursor, 0.5, &mut clock, 16);
+            // Halfway from the deadzone to the output edge: (80 + 1400) / 2 px/s.
+            assert_abs_diff_eq!(step, 740. * 0.016, epsilon = EPS);
+        }
+    }
+
+    #[test]
+    fn follow_command_completion_preserves_display_speed() {
+        for level in [1.5, 2., 4., 8.] {
+            let mut state = state_at(1.25, Point::from((960., 540.)), Size::from((1920., 1080.)));
+            let mut clock = test_clock();
+            let config = test_anim_config();
+            let zoom = niri_config::Zoom {
+                follow_min_speed: 500.,
+                follow_max_speed: 500.,
+                ..Default::default()
+            };
+            let cursor = Point::from((120., 540.));
+            state.set_target_level(level, cursor, &clock, config);
+            state.update_follow(cursor, zoom, &clock, config);
+            for complete in [false, true] {
+                if complete {
+                    clock.set_complete_instantly(true);
+                    state.advance_animations();
+                    clock.set_complete_instantly(false);
+                }
+                let before = state.viewport_transform().apply(cursor);
+                advance(&mut state, &mut clock, 16);
+                state.update_follow(cursor, zoom, &clock, config);
+                let after = state.viewport_transform().apply(cursor);
+                assert_abs_diff_eq!(after.x - before.x, 8., epsilon = EPS);
+                assert_abs_diff_eq!(after.y, before.y, epsilon = EPS);
+            }
+        }
     }
 
     #[test]

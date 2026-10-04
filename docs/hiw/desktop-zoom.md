@@ -117,7 +117,7 @@ Physics uses displayed geometry: overshoot is the vector from the nearest deadzo
 
 Speed varies between `follow-min-speed` and `follow-max-speed` (defaults 80 and 1400 displayed logical pixels/second), currently using smoothstep. Each step is capped by the remaining reachable distance. Viewport bounds take precedence: if the clamp prevents further movement, follow finishes even if the pointer remains outside the deadzone.
 
-Resting `FollowState` moves the focal; `CombinedFollow` moves `FlexibleAnchor.display` during a command. They share physics, not lifecycle payloads. Each owns its timing; suspension discards follow timing so resumed tracking starts without stale elapsed time.
+Resting `FollowState` moves the focal; its displayed distance step is divided by `level - 1` before applying it to the focal. Identity is handled before this conversion, and the result is capped at the reachable focal target. `CombinedFollow` already moves `FlexibleAnchor.display` in displayed units during a command. Both paths therefore have the same displayed speed, including command completion. They share physics, not lifecycle payloads. Each owns its timing; suspension discards follow timing so resumed tracking starts without stale elapsed time.
 
 `zoom_tracking_enabled` gates tracking during session lock, Overview presentation, screenshot UI and MRU. `Niri::update_zoom_follow` runs per frame for the pointer-owning output and commits resting follows on other outputs.
 
