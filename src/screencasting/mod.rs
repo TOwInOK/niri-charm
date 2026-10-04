@@ -238,6 +238,7 @@ impl State {
 
                 if cast.dequeue_buffer_and_render(
                     renderer,
+                    output,
                     &elements,
                     &cursor_data,
                     bbox.size,
@@ -602,7 +603,8 @@ impl Niri {
             }
             let cursor_data = cursor_data.as_ref().unwrap();
 
-            if cast.dequeue_buffer_and_render(renderer, &elements, cursor_data, size, scale) {
+            if cast.dequeue_buffer_and_render(renderer, output, &elements, cursor_data, size, scale)
+            {
                 cast.record_frame_time(target_presentation_time);
             }
         }
@@ -687,7 +689,14 @@ impl Niri {
 
             let cursor_data = CursorData::compute(&elements, main_start, pointer_location, scale);
 
-            if cast.dequeue_buffer_and_render(renderer, &elements, &cursor_data, bbox.size, scale) {
+            if cast.dequeue_buffer_and_render(
+                renderer,
+                output,
+                &elements,
+                &cursor_data,
+                bbox.size,
+                scale,
+            ) {
                 cast.record_frame_time(target_presentation_time);
             }
         }

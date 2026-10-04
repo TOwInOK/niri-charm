@@ -216,6 +216,8 @@ Output, screencast and screen-capture targets use consistent desktop geometry. P
 
 Nearest elements hide their underlying storage to prevent hardware planes from bypassing the filter. An output-owned `ExtraDamage` commit invalidates the scene when the selected filter changes, including config reload with stationary clients; output and capture damage trackers consume that history independently. Geometry and input mapping are unchanged. This magnifies texture pixels, not an intermediate screenshot of the entire desktop, and does not remove application-rendered antialiasing.
 
+PipeWire acquires a destination buffer before advancing scene or cursor damage history. If the consumer holds all buffers, the cast retains that history and schedules another attempt through its existing redraw timer at the negotiated frame interval. A returned buffer can then receive a sampling-only change without a new client commit; driver streams do not signal buffer returns through the `process` callback.
+
 The screenshot editor also uses `SamplingRenderElement` for its circular magnifier (`ScreenshotMagnifier` shader), always selecting nearest independently of desktop zoom configuration. Its pixel grid and center marker are overlay-only; neither changes the frozen frame or export. The editor owns wheel input while open and stores its separate 1×–32× magnifier level for that session (initially hidden at 1×).
 At 1×, magnifier rendering returns before preparing its source texture or emitting overlay elements. Wheel input remains owned by the editor, so increasing to 2× restores the lens without changing desktop zoom.
 

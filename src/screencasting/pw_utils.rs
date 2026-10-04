@@ -1129,7 +1129,7 @@ impl Cast {
         }
     }
 
-    fn dequeue_available_buffer(&mut self) -> Option<NonNull<pw_buffer>> {
+    fn dequeue_available_buffer(&self) -> Option<NonNull<pw_buffer>> {
         unsafe { NonNull::new(self.stream.dequeue_raw_buffer()) }
     }
 
@@ -1211,6 +1211,7 @@ impl Cast {
     pub fn dequeue_buffer_and_render(
         &mut self,
         renderer: &mut GlesRenderer,
+        output: &Output,
         mut elements: &[CastRenderElement<GlesRenderer>],
         cursor_data: &CursorData<CastRenderElement<GlesRenderer>>,
         size: Size<i32, Physical>,
@@ -1228,6 +1229,15 @@ impl Cast {
             error!("cast must be in Ready state to render");
             return false;
         };
+        // Do not consume damage history until the frame has a destination buffer.
+        let Some(pw_buffer) = self.dequeue_available_buffer() else {
+            warn!("no available buffer in pw stream, skipping frame");
+            let retry_at = get_monotonic_time() + inner.min_time_between_frames;
+            drop(inner);
+            self.schedule_redraw(output.clone(), retry_at);
+            return false;
+        };
+
         let damage_tracker = damage_tracker
             .get_or_insert_with(|| OutputDamageTracker::new(size, scale, Transform::Normal));
         let cursor_damage_tracker = cursor_damage_tracker.get_or_insert_with(|| {
@@ -1272,15 +1282,13 @@ impl Cast {
 
         if damage.is_none() && !has_cursor_update {
             trace!("no damage, skipping frame");
+            drop(inner);
+            unsafe { return_unused_buffer(&self.stream, pw_buffer) };
             return false;
         }
         *last_cursor_location = Some(cursor_data.location);
         drop(inner);
 
-        let Some(pw_buffer) = self.dequeue_available_buffer() else {
-            warn!("no available buffer in pw stream, skipping frame");
-            return false;
-        };
         let buffer = pw_buffer.as_ptr();
 
         let mut inner = self.inner.borrow_mut();
