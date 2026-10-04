@@ -99,6 +99,8 @@ Under ordinary Zoom the position composition is identity. During handoff it appl
 
 Relative device motion is adjusted by pointer presentation scale. Absolute pointer and output-mapped tablet input use inverse pointer presentation; scene hit testing subsequently applies the scene mapping. Touch follows the relevant display-to-scene mapping without starting pointer follow. Focused-window tablet mapping targets logical window geometry directly, not a second inverse Zoom transform.
 
+Relative motion crosses outputs in displayed global coordinates. On entry, the final displayed position (including the remaining motion) is inverse-mapped through the destination pointer transform without re-anchoring its camera. This also covers a zoomed source and a locked destination. Source viewport locking still prevents leaving that viewport, and spatial-move grabs keep their explicit wrapping policy.
+
 Programmatic warps use canonical coordinates. Locked Zoom clamps them to its presented viewport; unlocked warps can start deadzone follow. Hot corners and screen-space UI must not receive the scene inverse.
 
 ### Drag positions across camera frames

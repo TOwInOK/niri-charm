@@ -2801,11 +2801,8 @@ impl State {
         // Relative motion is scaled by the pointer presentation transform of the output under
         // the current pointer position. This matches the visible pointer presentation: the
         // effective desktop zoom normally, the identity while the session is locked.
-        let zoom_level = self
-            .niri
-            .global_space
-            .output_under(pos)
-            .next()
+        let source_output = self.niri.global_space.output_under(pos).next();
+        let zoom_level = source_output
             .map(|output| self.niri.pointer_presentation_transform(output).factor())
             .unwrap_or(1.);
         let delta = event.delta().downscale(zoom_level);
@@ -2888,7 +2885,27 @@ impl State {
             }
             None
         });
-        if let Some((output, horizontal)) = spatial_grab.flatten() {
+        let spatial_grab = spatial_grab.flatten();
+        if spatial_grab.is_none() {
+            // Cross output boundaries in displayed space, then enter the destination's
+            // existing viewport. Source-scaled content coordinates are not destination input.
+            let display = if zoom_level == 1. {
+                new_pos
+            } else {
+                self.niri.display_position_for_content(pos) + event.delta()
+            };
+            if let Some((output, local)) = self.niri.output_under(display) {
+                if Some(output) != source_output {
+                    let origin = self.niri.global_space.output_geometry(output).unwrap().loc;
+                    new_pos = origin.to_f64()
+                        + self
+                            .niri
+                            .pointer_presentation_transform(output)
+                            .apply_inverse(local);
+                }
+            }
+        }
+        if let Some((output, horizontal)) = spatial_grab {
             if let Some(geo) = self.niri.global_space.output_geometry(&output) {
                 let geo = geo.to_f64();
                 if horizontal {
@@ -2931,8 +2948,8 @@ impl State {
         // While the zoom is locked, the viewport stays fixed and the pointer cannot leave the
         // content it currently displays. The owning output is the one under the previous
         // pointer position.
-        if let Some(output) = self.niri.global_space.output_under(pos).next().cloned() {
-            new_pos = self.clamp_pointer_to_locked_viewport(new_pos, &output);
+        if let Some(output) = source_output {
+            new_pos = self.clamp_pointer_to_locked_viewport(new_pos, output);
         }
 
         let display_pos = self.niri.display_position_for_content(new_pos);

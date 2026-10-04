@@ -1308,6 +1308,77 @@ fn global_output_bounds(f: &mut Fixture) -> Rectangle<i32, Logical> {
 }
 
 #[test]
+fn zoom_relative_cross_output_preserves_displayed_motion() {
+    for scale in [1., 1.5] {
+        for source_zoom in [1., 2., 4.] {
+            for target_zoom in [1., 1.5, 4.] {
+                for locked in [false, true] {
+                    for reverse in [false, true] {
+                        let mut f = set_up_with_config(&format!("{CONFIG}\nzoom {{ deadzone-size 1; }}\noutput \"headless-1\" {{ scale {scale}; }}"));
+                        let left = f.niri_output(1);
+                        f.add_output(2, (1920, 720));
+                        let right = f.niri_output(2);
+                        let (source, target) = if reverse {
+                            (&right, &left)
+                        } else {
+                            (&left, &right)
+                        };
+                        let source_geo = f.niri().global_space.output_geometry(source).unwrap();
+                        let target_geo = f.niri().global_space.output_geometry(target).unwrap();
+                        let source_focal = Point::from((
+                            source_geo.size.w as f64 / 2.,
+                            source_geo.size.h as f64 / 2.,
+                        ));
+                        let target_focal = Point::from((
+                            target_geo.size.w as f64 / 2.,
+                            target_geo.size.h as f64 / 2.,
+                        ));
+                        set_zoom(&mut f, source, source_zoom, source_focal);
+                        set_zoom(&mut f, target, target_zoom, target_focal);
+                        f.niri()
+                            .layout
+                            .monitor_for_output_mut(target)
+                            .unwrap()
+                            .zoom_mut()
+                            .set_locked(locked, target_focal);
+                        let local = Point::from((
+                            if reverse {
+                                1.
+                            } else {
+                                source_geo.size.w as f64 - 1.
+                            },
+                            source_geo.size.h.min(target_geo.size.h) as f64 / 2.,
+                        ));
+                        let position = source_geo.loc.to_f64()
+                            + f.niri()
+                                .pointer_presentation_transform(source)
+                                .apply_inverse(local);
+                        f.niri_state().move_cursor(position);
+                        let id = f.add_client();
+                        let dx = if reverse { -21. } else { 21. };
+                        move_pointer(&mut f, id, dx, 0.);
+                        let canonical = pointer_location(&mut f);
+                        assert_eq!(f.niri().output_under(canonical).unwrap().0, target);
+                        let expected = source_geo.loc.to_f64() + local + Point::from((dx, 0.));
+                        let display = f.niri().display_position_for_content(canonical);
+                        assert_abs_diff_eq!(display.x, expected.x, epsilon = 1e-9);
+                        assert_abs_diff_eq!(display.y, expected.y, epsilon = 1e-9);
+                        assert_eq!(zoom_focal(&mut f, source), source_focal);
+                        assert_eq!(zoom_focal(&mut f, target), target_focal);
+                        let hotspot = cursor_hotspot(&mut f, target);
+                        let physical = (expected - target_geo.loc.to_f64() - hotspot)
+                            .to_physical_precise_round(Scale::from(
+                                target.current_scale().fractional_scale(),
+                            ));
+                        assert_eq!(pointer_element_locs(f.niri_state(), target), vec![physical]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn zoom_fractional_focal_touch_hits_rendered_edge() {
     use smithay::backend::input::InputEvent;
 
