@@ -133,7 +133,9 @@ Gesture lock semantics are different: a gesture begun locked has a center anchor
 
 ### Hold session and Restore
 
-Hold sessions live outside the viewport FSM. Press records the owning output and a `ZoomSnapshot` of displayed level, derived target and focal, then issues the requested command. A `lock=true` press additionally captures the pre-press lock state for the release to restore, and issues the command through `set_target_level_and_lock`: pointer-anchored and locked from the first frame.
+Hold sessions live outside the viewport FSM. Press records the owning output and a `ZoomSnapshot` of displayed level, derived target and focal, then issues the requested command. A `lock=true` press issues the command through `set_level_and_lock`: pointer-anchored and locked from the first frame.
+
+Locking Zoom holds and momentary `zoom-lock` holds share the pre-override lock state on each output. The former temporarily requests locked; the latter remembers the inverse of the effective lock at its press. The latest press takes effect immediately. Releasing either removes only its override: any surviving hold retains its requested value, and the last release restores the shared base. Re-entry preserves that base, including promotion of a plain Zoom hold to a locking hold. Outputs remain independent, and lost-release cleanup uses the same resolution.
 
 Unlocked Restore animates progress 0→1: level interpolates in log space towards the saved **target**, focal towards the saved focal. At destination 1×, the source focal stays fixed until completion. A snapshot's sampled level is not the resting restore destination.
 

@@ -104,27 +104,28 @@ pub struct ZoomHoldState {
     pub output: Output,
     /// The zoom state to restore on release.
     pub previous: ZoomSnapshot,
-    /// The lock state to restore on release, when the hold engaged the lock.
+    /// Base lock state without either temporary hold override.
     ///
-    /// `Some` only for `zoom hold=true lock=true`: it captures whether the
-    /// viewport was locked at press time so release can restore it. Plain
-    /// holds leave the lock untouched, so this stays `None` for them.
-    pub locked: Option<bool>,
+    /// Present only when this hold engaged the lock. Overlapping holds on the
+    /// same output share this base; releasing one retains the other override.
+    pub lock_base: Option<bool>,
 }
 
 /// An active momentary `zoom-lock hold=true` session.
 ///
 /// Created when a `zoom-lock hold=true` bind press is executed and owned by
 /// the trigger and the output resolved at that moment. Releasing the trigger
-/// restores the lock state captured at press time.
+/// removes its override, preserving another hold or restoring the base lock.
 #[derive(Debug, Clone)]
 pub struct ZoomLockHoldState {
     /// The physical control whose release ends the hold.
     pub trigger: ZoomHoldTrigger,
     /// The output the hold applies to, fixed at press time.
     pub output: Output,
-    /// The lock state to restore on release.
-    pub was_locked: bool,
+    /// Base lock state without either temporary hold override.
+    pub lock_base: bool,
+    /// The temporary value selected by this hold, independent of its base.
+    pub locked: bool,
 }
 
 /// Routing state of a compositor-owned touchpad pinch gesture.
@@ -5226,8 +5227,7 @@ impl State {
     /// retargets the current viewport; on another output the old session ends
     /// with an animated restore first.
     ///
-    /// With `lock` the press also locks the viewport and the release restores
-    /// the lock state captured at press time.
+    /// With `lock` the press adds a temporary locked override; release removes it.
     pub(crate) fn begin_zoom_hold(&mut self, trigger: ZoomHoldTrigger, preset: f64, lock: bool) {
         let max_zoom = self.niri.config.borrow().zoom.max_zoom;
         let Some((output, anchor)) = self.zoom_target() else {
@@ -5241,11 +5241,17 @@ impl State {
         if let Some(active) = self.niri.zoom_hold.as_mut() {
             if active.output == output {
                 active.trigger = trigger;
-                if lock && active.locked.is_none() {
+                if lock && active.lock_base.is_none() {
                     // A plain hold retargeted by a locking hold starts
                     // restoring the lock state from this press.
                     if let Some(mon) = self.niri.layout.monitor_for_output(&output) {
-                        active.locked = Some(mon.zoom().is_locked());
+                        active.lock_base = Some(
+                            self.niri
+                                .zoom_lock_hold
+                                .as_ref()
+                                .filter(|hold| hold.output == output)
+                                .map_or_else(|| mon.zoom().is_locked(), |hold| hold.lock_base),
+                        );
                     }
                 }
             } else {
@@ -5259,12 +5265,18 @@ impl State {
 
         if self.niri.zoom_hold.is_none() {
             let previous = mon.zoom().snapshot();
-            let locked = lock.then(|| mon.zoom().is_locked());
+            let lock_base = lock.then(|| {
+                self.niri
+                    .zoom_lock_hold
+                    .as_ref()
+                    .filter(|hold| hold.output == output)
+                    .map_or_else(|| mon.zoom().is_locked(), |hold| hold.lock_base)
+            });
             self.niri.zoom_hold = Some(ZoomHoldState {
                 trigger,
                 output: output.clone(),
                 previous,
-                locked,
+                lock_base,
             });
         }
 
@@ -5282,9 +5294,9 @@ impl State {
     /// saved target and the focal point towards the saved focal. The restored
     /// levels are clamped to the current `max-zoom` and the focal to the
     /// current view size, so a config reload during the hold cannot restore
-    /// an out-of-range state. The zoom lock is not restored: it is a user
-    /// preference, not part of the temporary viewport override; while locked,
-    /// only the level animates back.
+    /// an out-of-range state. A locking hold removes its temporary lock
+    /// override before restoring the viewport; a surviving lock hold still
+    /// applies. Plain holds leave the user lock preference untouched.
     ///
     /// This is a cleanup path, not a new user action: it is intentionally not
     /// gated on the compositor lock or the screenshot UI allow-list.
@@ -5299,10 +5311,16 @@ impl State {
             return;
         };
 
-        // Restore the lock state captured at press time before the zoom
+        // Resolve the remaining lock override or shared base before the zoom
         // restore: a locked restore animates only the level, so the lock must
         // already be in its final state.
-        if let Some(locked) = hold.locked {
+        if let Some(base) = hold.lock_base {
+            let locked = self
+                .niri
+                .zoom_lock_hold
+                .as_ref()
+                .filter(|active| active.output == hold.output)
+                .map_or(base, |active| active.locked);
             mon.zoom_mut().set_locked(locked, pointer);
         }
 
@@ -5332,10 +5350,16 @@ impl State {
             return;
         };
 
-        // Restore the lock state captured at press time before the zoom
+        // Resolve the remaining lock override or shared base before the zoom
         // restore: a locked restore animates only the level, so the lock must
         // already be in its final state.
-        if let Some(locked) = hold.locked {
+        if let Some(base) = hold.lock_base {
+            let locked = self
+                .niri
+                .zoom_lock_hold
+                .as_ref()
+                .filter(|active| active.output == hold.output)
+                .map_or(base, |active| active.locked);
             mon.zoom_mut().set_locked(locked, pointer);
         }
 
@@ -5388,18 +5412,25 @@ impl State {
             return;
         };
 
-        let was_locked = mon.zoom().is_locked();
-        mon.zoom_mut().set_locked(!was_locked, anchor);
+        let locked = !mon.zoom().is_locked();
+        let lock_base = self
+            .niri
+            .zoom_hold
+            .as_ref()
+            .filter(|hold| hold.output == output)
+            .and_then(|hold| hold.lock_base)
+            .unwrap_or(!locked);
+        mon.zoom_mut().set_locked(locked, anchor);
         self.niri.zoom_lock_hold = Some(ZoomLockHoldState {
             trigger,
             output: output.clone(),
-            was_locked,
+            lock_base,
+            locked,
         });
         self.niri.queue_redraw(&output);
     }
 
-    /// Ends the active `zoom-lock hold=true` session, restoring the lock
-    /// state captured at press time.
+    /// Ends the active lock hold, retaining a Zoom hold override or the base lock.
     ///
     /// This is a cleanup path, not a new user action: it is intentionally not
     /// gated on the compositor lock or the screenshot UI allow-list.
@@ -5414,7 +5445,14 @@ impl State {
             return;
         };
 
-        mon.zoom_mut().set_locked(hold.was_locked, pointer);
+        let locked = self
+            .niri
+            .zoom_hold
+            .as_ref()
+            .filter(|active| active.output == hold.output)
+            .and_then(|active| active.lock_base)
+            .map_or(hold.lock_base, |_| true);
+        mon.zoom_mut().set_locked(locked, pointer);
         self.niri.queue_redraw(&hold.output);
     }
 

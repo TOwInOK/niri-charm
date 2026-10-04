@@ -365,7 +365,7 @@ pub struct Niri {
     /// Active `zoom-lock hold=true` session, if any.
     ///
     /// Owned by the physical trigger that started it; releasing the trigger
-    /// restores the lock state captured at press time on the owning output.
+    /// removes its lock override on the owning output, preserving other holds.
     pub zoom_lock_hold: Option<ZoomLockHoldState>,
     /// Routing state of a compositor-owned touchpad pinch gesture, if any.
     ///

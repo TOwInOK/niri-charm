@@ -3437,6 +3437,105 @@ fn zoom_hold_lock_preserves_prior_lock() {
 }
 
 #[test]
+fn zoom_overlapping_holds_restore_base_lock() {
+    for initial in [false, true] {
+        for zoom_first in [false, true] {
+            for zoom_release_first in [false, true] {
+                for reenter in [false, true] {
+                    let mut f = set_up();
+                    let output = f.niri_output(1);
+                    f.niri_state().move_cursor(Point::from((960., 360.)));
+                    if initial {
+                        f.niri_state().do_action(Action::ZoomLock(false), false);
+                    }
+                    let mut z = key_trigger(30);
+                    let l = key_trigger(31);
+                    if zoom_first {
+                        hold_press_locking(&mut f, z, 2., true);
+                        zoom_lock_press(&mut f, l);
+                    } else {
+                        zoom_lock_press(&mut f, l);
+                        hold_press_locking(&mut f, z, 2., true);
+                    }
+                    let lock_override = if zoom_first { false } else { !initial };
+                    if reenter {
+                        let old = z;
+                        z = key_trigger(32);
+                        hold_press_locking(&mut f, z, 3., true);
+                        hold_release(&mut f, old);
+                        assert_eq!(zoom_level(&mut f, &output), 3.);
+                    }
+                    if zoom_release_first {
+                        hold_release(&mut f, z);
+                        assert_eq!(zoom_locked(&mut f, &output), lock_override);
+                        f.niri_state().end_zoom_lock_hold_for_trigger(l);
+                    } else {
+                        f.niri_state().end_zoom_lock_hold_for_trigger(l);
+                        assert!(zoom_locked(&mut f, &output));
+                        hold_release(&mut f, z);
+                    }
+                    assert_eq!(zoom_locked(&mut f, &output), initial,
+                        "initial={initial}, zoom_first={zoom_first}, zoom_release_first={zoom_release_first}, reenter={reenter}");
+                    assert_eq!(zoom_level(&mut f, &output), 1.);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn zoom_overlapping_holds_promote_plain_hold_and_cleanup() {
+    for initial in [false, true] {
+        for cleanup in [false, true] {
+            let mut f = set_up();
+            let output = f.niri_output(1);
+            f.niri_state().move_cursor(Point::from((960., 360.)));
+            if initial {
+                f.niri_state().do_action(Action::ZoomLock(false), false);
+            }
+            hold_press(&mut f, key_trigger(30), 2.);
+            zoom_lock_press(&mut f, key_trigger(31));
+            hold_press_locking(&mut f, key_trigger(32), 3., true);
+            if cleanup {
+                f.niri_state().do_action(Action::ChangeVt(2), false);
+            } else {
+                f.niri_state()
+                    .end_zoom_lock_hold_for_trigger(key_trigger(31));
+                assert!(zoom_locked(&mut f, &output));
+                hold_release(&mut f, key_trigger(32));
+            }
+            assert_eq!(zoom_locked(&mut f, &output), initial);
+            assert_eq!(zoom_level(&mut f, &output), 1.);
+            assert!(f.niri().zoom_hold.is_none());
+            assert!(f.niri().zoom_lock_hold.is_none());
+        }
+    }
+}
+
+#[test]
+fn zoom_overlapping_holds_retarget_outputs_independently() {
+    let mut f = set_up();
+    let a = f.niri_output(1);
+    f.add_output(2, (1920, 720));
+    let b = f.niri_output(2);
+    f.niri_state().move_cursor(Point::from((960., 360.)));
+    hold_press_locking(&mut f, key_trigger(30), 2., true);
+    zoom_lock_press(&mut f, key_trigger(31));
+    f.niri_state().move_cursor(Point::from((2880., 360.)));
+    hold_press_locking(&mut f, key_trigger(32), 2., true);
+    assert!(!zoom_locked(&mut f, &a));
+    assert!(zoom_locked(&mut f, &b));
+    zoom_lock_press(&mut f, key_trigger(33));
+    assert!(!zoom_locked(&mut f, &a));
+    hold_release(&mut f, key_trigger(32));
+    assert!(!zoom_locked(&mut f, &b));
+    f.niri_state()
+        .end_zoom_lock_hold_for_trigger(key_trigger(33));
+    assert!(!zoom_locked(&mut f, &a));
+    assert!(!zoom_locked(&mut f, &b));
+}
+
+#[test]
 fn zoom_lock_hold_momentary() {
     let mut f = set_up();
     let output = f.niri_output(1);
