@@ -615,6 +615,6 @@ The overlays are drawn on the physical output only; they are not included in scr
 
 Each output keeps its own zoom state.
 Zoom actions apply to the output under the pointer, or to the focused output when the pointer is not on any output.
-Opening the [Overview](./Overview.md) temporarily suppresses the zoom, and the zoom level is restored when the Overview closes.
+Opening the [Overview](./Overview.md) ends the zoom session and clears its lock. Closing the Overview returns to the unzoomed desktop; zoom actions are ignored while it is open.
 Desktop zoom does not affect the lock screen.
 Monitor screenshots and monitor screencasts include desktop zoom; window-only screenshots and window casts do not.

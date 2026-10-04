@@ -281,12 +281,12 @@ pub struct ZoomState {
     /// Equals [`level`](Self::level) at rest and during a pinch gesture, and
     /// differs while a zoom animation or restore transition is in progress.
     pub target_level: f64,
-    /// Desktop scene zoom after Overview suppression.
+    /// Currently the same as [`level`](Self::level).
     ///
-    /// While the overview is open this is 1; during the overview transition
-    /// it moves between [`level`](Self::level) and 1. This is the zoom of the
-    /// desktop scene itself, not necessarily the transform currently visible
-    /// on screen (for example under the session lock).
+    /// Opening the Overview ends the desktop zoom session, so this reports 1
+    /// even while its transition still renders the captured zoomed view. It
+    /// does not expose the Overview camera transform or the visible scene
+    /// scale (which may also differ under the session lock).
     pub effective_level: f64,
     /// Fixed point of the current zoom transform in output-local logical
     /// coordinates.
