@@ -157,12 +157,12 @@ stack_focused_left() {
     sleep 0.2
 }
 
-zeditor --foreground --user-data-dir="$XDG_RUNTIME_DIR/niri-sweaters-zed-preview" --new >/dev/null 2>&1 &
+zeditor --foreground --user-data-dir="$XDG_RUNTIME_DIR/niri-charm-zed-preview" --new >/dev/null 2>&1 &
 wait_for_app dev.zed.Zed
 open_terminal knit-desktop-helix "#171a16" "#c6cabd"
 stack_focused_left
 
-obsidian --user-data-dir="$XDG_RUNTIME_DIR/niri-sweaters-obsidian-preview" --disable-gpu >/dev/null 2>&1 &
+obsidian --user-data-dir="$XDG_RUNTIME_DIR/niri-charm-obsidian-preview" --disable-gpu >/dev/null 2>&1 &
 wait_for_app md.obsidian.Obsidian
 open_terminal knit-desktop-omp "#262735" "#c9cad6"
 stack_focused_left

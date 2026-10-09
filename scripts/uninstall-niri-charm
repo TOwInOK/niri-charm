@@ -1,20 +1,20 @@
 #!/bin/sh
 set -eu
 
-install_binary=/usr/local/bin/niri-sweaters
-install_session=/usr/local/bin/niri-sweaters-session
-install_service=/usr/lib/systemd/user/niri-sweaters.service
-install_shutdown=/usr/lib/systemd/user/niri-sweaters-shutdown.target
-install_desktop=/usr/share/wayland-sessions/niri-sweaters.desktop
-install_default_config=/usr/local/share/niri-sweaters/default-config.kdl
+install_binary=/usr/local/bin/niri-charm
+install_session=/usr/local/bin/niri-charm-session
+install_service=/usr/lib/systemd/user/niri-charm.service
+install_shutdown=/usr/lib/systemd/user/niri-charm-shutdown.target
+install_desktop=/usr/share/wayland-sessions/niri-charm.desktop
+install_default_config=/usr/local/share/niri-charm/default-config.kdl
 
 dry_run=0
 
 usage() {
     cat <<'EOF'
-Usage: scripts/uninstall-niri-sweaters [OPTIONS]
+Usage: scripts/uninstall-niri-charm [OPTIONS]
 
-Remove only the Niri Sweaters session installed by this repository.
+Remove only the Niri Charm session installed by this repository.
 
 Options:
   --dry-run     Print privileged removal commands without changing the system.
@@ -53,8 +53,8 @@ elif [ "$dry_run" -eq 0 ]; then
 fi
 
 if [ "$dry_run" -eq 0 ] && command -v systemctl >/dev/null 2>&1 &&
-   systemctl --user is-active --quiet niri-sweaters.service 2>/dev/null; then
-    echo 'error: Niri Sweaters is running; log out of that session before removing it' >&2
+   systemctl --user is-active --quiet niri-charm.service 2>/dev/null; then
+    echo 'error: Niri Charm is running; log out of that session before removing it' >&2
     exit 1
 fi
 
@@ -116,4 +116,4 @@ for path in \
     fi
 done
 
-echo 'Removed Niri Sweaters session files'
+echo 'Removed Niri Charm session files'

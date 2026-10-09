@@ -2,3 +2,5 @@
 /result
 
 .idea
+**/.venv
+.zed

@@ -1,6 +1,6 @@
 # This flake file is community maintained
 {
-  description = "Niri Sweaters: niri with procedural knitted borders.";
+  description = "Niri Charm: niri with procedural knitted borders.";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -11,7 +11,7 @@
     }:
     let
       revision = self.shortRev or self.dirtyShortRev or "unknown";
-      niri-sweaters-package =
+      niri-charm-package =
         {
           lib,
           cairo,
@@ -36,7 +36,7 @@
         }:
 
         rustPlatform.buildRustPackage {
-          pname = "niri-sweaters";
+          pname = "niri-charm";
           version = revision;
 
           src = lib.fileset.toSource {
@@ -54,14 +54,14 @@
           };
 
           postPatch = ''
-            patchShebangs resources/niri-sweaters/niri-sweaters-session
-            substituteInPlace resources/niri-sweaters/niri-sweaters-session \
-              --replace-fail '/usr/local/bin/niri-sweaters' "$out/bin/niri-sweaters" \
-              --replace-fail '/usr/local/share/niri-sweaters/default-config.kdl' "$out/share/niri-sweaters/default-config.kdl"
-            substituteInPlace resources/niri-sweaters/niri-sweaters.service \
-              --replace-fail '/usr/local/bin/niri-sweaters-session' "$out/bin/niri-sweaters-session"
-            substituteInPlace resources/niri-sweaters/niri-sweaters.desktop \
-              --replace-fail '/usr/local/bin/niri-sweaters-session' "$out/bin/niri-sweaters-session"
+            patchShebangs resources/niri-charm/niri-charm-session
+            substituteInPlace resources/niri-charm/niri-charm-session \
+              --replace-fail '/usr/local/bin/niri-charm' "$out/bin/niri-charm" \
+              --replace-fail '/usr/local/share/niri-charm/default-config.kdl' "$out/share/niri-charm/default-config.kdl"
+            substituteInPlace resources/niri-charm/niri-charm.service \
+              --replace-fail '/usr/local/bin/niri-charm-session' "$out/bin/niri-charm-session"
+            substituteInPlace resources/niri-charm/niri-charm.desktop \
+              --replace-fail '/usr/local/bin/niri-charm-session' "$out/bin/niri-charm-session"
           '';
 
           cargoLock = {
@@ -117,17 +117,17 @@
             "--skip=::egl"
           ];
           postInstall = ''
-            mv $out/bin/niri $out/bin/niri-sweaters
+            mv $out/bin/niri $out/bin/niri-charm
 
-            install -Dm644 resources/niri-sweaters/niri-sweaters.desktop -t $out/share/wayland-sessions
-            install -Dm644 resources/niri-portals.conf $out/share/xdg-desktop-portal/niri-sweaters-portals.conf
-            install -Dm644 resources/default-config.kdl $out/share/niri-sweaters/default-config.kdl
+            install -Dm644 resources/niri-charm/niri-charm.desktop -t $out/share/wayland-sessions
+            install -Dm644 resources/niri-portals.conf $out/share/xdg-desktop-portal/niri-charm-portals.conf
+            install -Dm644 resources/default-config.kdl $out/share/niri-charm/default-config.kdl
           ''
           + lib.optionalString withSystemd ''
-            install -Dm755 resources/niri-sweaters/niri-sweaters-session $out/bin/niri-sweaters-session
+            install -Dm755 resources/niri-charm/niri-charm-session $out/bin/niri-charm-session
             install -Dm644 \
-              resources/niri-sweaters/niri-sweaters.service \
-              resources/niri-sweaters/niri-sweaters-shutdown.target \
+              resources/niri-charm/niri-charm.service \
+              resources/niri-charm/niri-charm-shutdown.target \
               -t $out/lib/systemd/user
           '';
 
@@ -146,13 +146,13 @@
           };
 
           passthru = {
-            providedSessions = [ "niri-sweaters" ];
+            providedSessions = [ "niri-charm" ];
           };
 
           meta = {
             description = "Scrollable-tiling Wayland compositor with procedural knitted borders";
             license = lib.licenses.gpl3Only;
-            mainProgram = "niri-sweaters";
+            mainProgram = "niri-charm";
             platforms = lib.platforms.linux;
           };
         };
@@ -167,7 +167,7 @@
     {
       checks = forAllSystems (system: {
         # We use the debug build here to save a bit of time.
-        niri-sweaters-debug = self.packages.${system}.niri-sweaters-debug;
+        niri-charm-debug = self.packages.${system}.niri-charm-debug;
       });
 
       devShells = forAllSystems (
@@ -175,7 +175,7 @@
         let
           pkgs = nixpkgsFor.${system};
           rustfmt' = pkgs.rustfmt.override { asNightly = true; };
-          niriSweaters = self.packages.${system}.niri-sweaters;
+          niriCharm = self.packages.${system}.niri-charm;
         in
         {
           default = pkgs.mkShell {
@@ -196,7 +196,7 @@
               pkgs.wrapGAppsHook4 # For `niri-visual-tests`
             ];
 
-            buildInputs = niriSweaters.buildInputs ++ [
+            buildInputs = niriCharm.buildInputs ++ [
               pkgs.libadwaita # For `niri-visual-tests`
             ];
 
@@ -206,7 +206,7 @@
               # in the package expression.
               #
               # This should only be set with `RUSTFLAGS="$RUSTFLAGS -C your-flags"`.
-              RUSTFLAGS = niriSweaters.RUSTFLAGS;
+              RUSTFLAGS = niriCharm.RUSTFLAGS;
             };
           };
         }
@@ -217,13 +217,13 @@
       packages = forAllSystems (
         system:
         let
-          niriSweaters = nixpkgsFor.${system}.callPackage niri-sweaters-package { };
+          niriCharm = nixpkgsFor.${system}.callPackage niri-charm-package { };
         in
         {
-          niri-sweaters = niriSweaters;
+          niri-charm = niriCharm;
 
           # NOTE: This is for development purposes only.
-          niri-sweaters-debug = niriSweaters.overrideAttrs (
+          niri-charm-debug = niriCharm.overrideAttrs (
             newAttrs: oldAttrs: {
               pname = oldAttrs.pname + "-debug";
 
@@ -234,18 +234,18 @@
             }
           );
 
-          default = niriSweaters;
+          default = niriCharm;
         }
       );
 
       overlays.default = final: _: {
-        niri-sweaters = final.callPackage niri-sweaters-package { };
+        niri-charm = final.callPackage niri-charm-package { };
       };
 
       nixosModules.default =
         { pkgs, ... }:
         let
-          package = pkgs.callPackage niri-sweaters-package { };
+          package = pkgs.callPackage niri-charm-package { };
         in
         {
           environment.systemPackages = [ package ];

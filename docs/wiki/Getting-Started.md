@@ -207,17 +207,17 @@ For example, you can replace systemd integration with dinit integration using `c
 
 ### NixOS/Nix
 
-This fork's flake provides the `niri-sweaters` package and a development shell. Build the side-by-side package and run its renamed binary with:
+This fork's flake provides the `niri-charm` package and a development shell. Build the side-by-side package and run its renamed binary with:
 
 ```sh
-nix build .#niri-sweaters
-./result/bin/niri-sweaters
+nix build .#niri-charm
+./result/bin/niri-charm
 ```
 
-On NixOS, import the flake's `nixosModules.default` to register **Niri Sweaters** as a separate display-manager session; the complete example is in the project README. If you're not on NixOS, you may need [NixGL](https://github.com/nix-community/nixGL):
+On NixOS, import the flake's `nixosModules.default` to register **Niri Charm** as a separate display-manager session; the complete example is in the project README. If you're not on NixOS, you may need [NixGL](https://github.com/nix-community/nixGL):
 
 ```sh
-nix run --impure github:guibou/nixGL -- ./result/bin/niri-sweaters
+nix run --impure github:guibou/nixGL -- ./result/bin/niri-charm
 ```
 
 ### Manual Installation

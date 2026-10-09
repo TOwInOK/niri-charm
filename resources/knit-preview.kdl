@@ -35,7 +35,7 @@ window-rule {
 
 
 window-rule {
-    match app-id=r#"^com\.mitchellh\.ghostty$"# title="Sweaters / checker"
+    match app-id=r#"^com\.mitchellh\.ghostty$"# title="Charm / checker"
     border {
         active-color "#5a6b53"
         inactive-color "#3e473a"
@@ -48,7 +48,7 @@ window-rule {
 
 
 window-rule {
-    match app-id=r#"^com\.mitchellh\.ghostty$"# title="Sweaters / diamond"
+    match app-id=r#"^com\.mitchellh\.ghostty$"# title="Charm / diamond"
     border {
         active-gradient from="#6c5878" to="#aa97b7" angle=45
         inactive-gradient from="#463d4b" to="#64576c" angle=45
@@ -109,17 +109,17 @@ window-rule {
     }
 }
 
-spawn-at-startup "ghostty" "--config-default-files=false" "--title=Sweaters / stockinette" "--window-decoration=false" "--font-size=16" "--background=#faf6ed" "--foreground=#38352e" "--window-padding-x=22" "--window-padding-y=24" "-e" "sh" "-c" r#"
-printf '\033[1mYOUR WINDOWS.\nIN SWEATERS.\033[0m\n\nProcedural knitted borders\nfor the niri compositor.\n\n\n01 / STOCKINETTE\n\nDense loops. Warm oat.\nRendered, not wallpapered.\n\n\nAlt + Left / Right  switch columns\nAlt + R             resize\nAlt + Shift + E     quit preview\n'
+spawn-at-startup "ghostty" "--config-default-files=false" "--title=Charm / stockinette" "--window-decoration=false" "--font-size=16" "--background=#faf6ed" "--foreground=#38352e" "--window-padding-x=22" "--window-padding-y=24" "-e" "sh" "-c" r#"
+printf '\033[1mNIRI CHARM.\nKNITTED BORDERS.\033[0m\n\nProcedural knitted borders\nfor the niri compositor.\n\n\n01 / STOCKINETTE\n\nDense loops. Warm oat.\nRendered, not wallpapered.\n\n\nAlt + Left / Right  switch columns\nAlt + R             resize\nAlt + Shift + E     quit preview\n'
 exec sleep infinity
 "#
 
-spawn-at-startup "ghostty" "--config-default-files=false" "--title=Sweaters / checker" "--window-decoration=false" "--font-size=16" "--background=#faf6ed" "--foreground=#38352e" "--window-padding-x=22" "--window-padding-y=24" "-e" "sh" "-c" r##"
+spawn-at-startup "ghostty" "--config-default-files=false" "--title=Charm / checker" "--window-decoration=false" "--font-size=16" "--background=#faf6ed" "--foreground=#38352e" "--window-padding-x=22" "--window-padding-y=24" "-e" "sh" "-c" r##"
 printf '\033[1mPICK YOUR PATTERN.\033[0m\n\nSix ways to dress a window.\n\n\n02 / CHECKER\n\nForest green + sage.\nA different sweater for every app.\n\n\nknit {\n    on\n    pattern "checker"\n    accent-color "#9ba98e"\n    stitch-size 8\n    relief 0.65\n    fuzz 0.15\n}\n'
 exec sleep infinity
 "##
 
-spawn-at-startup "ghostty" "--config-default-files=false" "--title=Sweaters / diamond" "--window-decoration=false" "--font-size=16" "--background=#faf6ed" "--foreground=#38352e" "--window-padding-x=22" "--window-padding-y=24" "-e" "sh" "-c" r#"
+spawn-at-startup "ghostty" "--config-default-files=false" "--title=Charm / diamond" "--window-decoration=false" "--font-size=16" "--background=#faf6ed" "--foreground=#38352e" "--window-padding-x=22" "--window-padding-y=24" "-e" "sh" "-c" r#"
 printf '\033[1mPART OF THE WINDOW.\033[0m\n\nNot a separate overlay.\n\n\n03 / DIAMOND\n\nPurple-to-rose gradient yarn.\nSame scrolling workflow.\n\n\nMove. Resize. Change focus.\nThe border stays with its window.\n\n\nstockinette / rib / checker\nzigzag / diamond / dots\n'
 exec sleep infinity
 "#

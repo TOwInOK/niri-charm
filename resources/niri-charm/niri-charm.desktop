@@ -1,6 +1,6 @@
 [Desktop Entry]
-Name=Niri Sweaters
+Name=Niri Charm
 Comment=A scrollable-tiling Wayland compositor with knitted borders
-Exec=/usr/local/bin/niri-sweaters-session
+Exec=/usr/local/bin/niri-charm-session
 Type=Application
-DesktopNames=niri-sweaters
+DesktopNames=niri-charm

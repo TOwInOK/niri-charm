@@ -3,26 +3,26 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
-resources_dir="$root_dir/resources/niri-sweaters"
+resources_dir="$root_dir/resources/niri-charm"
 knit_config="$root_dir/resources/knit-preview.kdl"
 default_config="$root_dir/resources/default-config.kdl"
 binary="$root_dir/target/release/niri"
 
-install_binary=/usr/local/bin/niri-sweaters
-install_session=/usr/local/bin/niri-sweaters-session
-install_service=/usr/lib/systemd/user/niri-sweaters.service
-install_shutdown=/usr/lib/systemd/user/niri-sweaters-shutdown.target
-install_desktop=/usr/share/wayland-sessions/niri-sweaters.desktop
-install_default_config=/usr/local/share/niri-sweaters/default-config.kdl
+install_binary=/usr/local/bin/niri-charm
+install_session=/usr/local/bin/niri-charm-session
+install_service=/usr/lib/systemd/user/niri-charm.service
+install_shutdown=/usr/lib/systemd/user/niri-charm-shutdown.target
+install_desktop=/usr/share/wayland-sessions/niri-charm.desktop
+install_default_config=/usr/local/share/niri-charm/default-config.kdl
 
 skip_build=0
 dry_run=0
 
 usage() {
     cat <<'EOF'
-Usage: scripts/install-niri-sweaters [OPTIONS]
+Usage: scripts/install-niri-charm [OPTIONS]
 
-Build and install the Niri Sweaters session alongside the stock Niri session.
+Build and install the Niri Charm session alongside the stock Niri session.
 
 Options:
   --skip-build  Reuse target/release/niri.
@@ -82,10 +82,10 @@ if [ ! -x "$binary" ]; then
 fi
 
 for resource in \
-    "$resources_dir/niri-sweaters-session" \
-    "$resources_dir/niri-sweaters.service" \
-    "$resources_dir/niri-sweaters-shutdown.target" \
-    "$resources_dir/niri-sweaters.desktop" \
+    "$resources_dir/niri-charm-session" \
+    "$resources_dir/niri-charm.service" \
+    "$resources_dir/niri-charm-shutdown.target" \
+    "$resources_dir/niri-charm.desktop" \
     "$knit_config" \
     "$default_config"; do
     if [ ! -f "$resource" ]; then
@@ -98,7 +98,7 @@ if [ "$dry_run" -eq 0 ] && ! command -v systemctl >/dev/null 2>&1; then
     exit 1
 fi
 
-echo 'Validating Niri Sweaters binary...'
+echo 'Validating Niri Charm binary...'
 if ! "$binary" validate --config "$knit_config"; then
     echo "error: release binary does not support the bundled knit configuration: $binary" >&2
     exit 1
@@ -134,10 +134,10 @@ run_privileged() {
 }
 
 run_privileged "$install" -Dm755 "$binary" "$install_binary"
-run_privileged "$install" -Dm755 "$resources_dir/niri-sweaters-session" "$install_session"
-run_privileged "$install" -Dm644 "$resources_dir/niri-sweaters.service" "$install_service"
-run_privileged "$install" -Dm644 "$resources_dir/niri-sweaters-shutdown.target" "$install_shutdown"
-run_privileged "$install" -Dm644 "$resources_dir/niri-sweaters.desktop" "$install_desktop"
+run_privileged "$install" -Dm755 "$resources_dir/niri-charm-session" "$install_session"
+run_privileged "$install" -Dm644 "$resources_dir/niri-charm.service" "$install_service"
+run_privileged "$install" -Dm644 "$resources_dir/niri-charm-shutdown.target" "$install_shutdown"
+run_privileged "$install" -Dm644 "$resources_dir/niri-charm.desktop" "$install_desktop"
 run_privileged "$install" -Dm644 "$default_config" "$install_default_config"
 
 if [ "$dry_run" -eq 1 ]; then
@@ -152,17 +152,17 @@ fi
 
 printf 'Installed: '
 "$install_binary" --version
-echo 'Use niri-sweaters validate for configs with knit directives; stock niri remains unchanged.'
-echo 'Session config: ~/.config/niri-sweaters/config.kdl'
+echo 'Use niri-charm validate for configs with knit directives; stock niri remains unchanged.'
+echo 'Session config: ~/.config/niri-charm/config.kdl'
 
 if command -v systemd-analyze >/dev/null 2>&1; then
-    systemd-analyze --user verify niri-sweaters.service niri-sweaters-shutdown.target
+    systemd-analyze --user verify niri-charm.service niri-charm-shutdown.target
 fi
 
 if command -v noctalia-greeter >/dev/null 2>&1; then
-    if ! noctalia-greeter sessions | grep -Fqx 'Niri Sweaters'; then
-        echo 'error: Noctalia Greeter did not discover Niri Sweaters' >&2
+    if ! noctalia-greeter sessions | grep -Fqx 'Niri Charm'; then
+        echo 'error: Noctalia Greeter did not discover Niri Charm' >&2
         exit 1
     fi
-    echo 'Session manager: Niri Sweaters detected'
+    echo 'Session manager: Niri Charm detected'
 fi

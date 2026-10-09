@@ -1,5 +1,5 @@
 [Unit]
-Description=Niri Sweaters scrollable-tiling Wayland compositor
+Description=Niri Charm scrollable-tiling Wayland compositor
 BindsTo=graphical-session.target
 Before=graphical-session.target
 Wants=graphical-session-pre.target
@@ -11,4 +11,4 @@ Before=xdg-desktop-autostart.target
 [Service]
 Slice=session.slice
 Type=notify
-ExecStart=/usr/local/bin/niri-sweaters-session
+ExecStart=/usr/local/bin/niri-charm-session

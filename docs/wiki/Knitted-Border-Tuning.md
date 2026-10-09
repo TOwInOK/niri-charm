@@ -1,6 +1,6 @@
 # How to tune a tidy knitted border
 
-For Niri Sweaters: start with the ready-made config, then adjust the sizes and colours. The formulas and short explanations will help you tune the border to your taste.
+For Niri Charm: start with the ready-made config, then adjust the sizes and colours. The formulas and short explanations will help you tune the border to your taste.
 
 ## 1. Start with this border
 
@@ -217,13 +217,13 @@ Change one parameter at a time, guided by the visible problem:
 | The colour does not change              | Check the matching gradient and later window-rules                                           |
 | The pattern changed after a resize      | Check several sizes: the stitch count is recalculated and perfect symmetry is not guaranteed |
 
-Validate the syntax with the **Niri Sweaters** binary, not stock niri:
+Validate the syntax with the **Niri Charm** binary, not stock niri:
 
 ```bash
-niri-sweaters validate --config /path/to/config.kdl
+niri-charm validate --config /path/to/config.kdl
 ```
 
-If you built from source, use `./target/release/niri` instead of `niri-sweaters`.
+If you built from source, use `./target/release/niri` instead of `niri-charm`.
 
 Then check at your normal working scale:
 

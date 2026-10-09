@@ -8,6 +8,409 @@ The toolbar, selection frame, dimming, axis guides, brush cursor and magnifier a
 
 The available tools are Select, Draw, Arrow, Rectangle and Blur. Text annotations are not implemented.
 
+### Visual guide
+
+<p>Open the editor with <code>Print</code>, select an area, then annotate it or export it. The captures below use demo content in a real Niri Charm session, with editor controls and configuration examples shown alongside the results. Numbered circles are documentation labels, not extra UI controls. Click any image for full size.</p>
+
+[Toolbar buttons](#toolbar-buttons) · [Color palette](#color-palette) · [Widths and magnifier](#adjusting-tools-and-the-magnifier) · [Panel placement](#toolbar-placement-examples) · [Margins and padding](#toolbar-spacing-and-padding) · [UI colors](#interface-color-examples) · [Tool colors](#independent-tool-colors) · [Custom palettes](#custom-color-palettes) · [Blur levels](#blur-strength-examples) · [Undo/redo](#undo-and-redo) · [Axes: Arrow, Draw, Rectangle](#drawing-with-axis-guides) · [Cursor](#including-the-captured-cursor) · [Export](#copy-save-and-cancel) · [Configuration reference](#default-configuration)
+
+[![The real screenshot editor with a crop, green arrow, orange rectangle, blue freehand underline, blurred demo text and a pixel magnifier](./img/screenshot-editor-overview.png)](./img/screenshot-editor-overview.png)
+
+The white frame is the crop. The arrow, rectangle, freehand line and blur are edits that will be exported. The toolbar, dimming, crop frame and magnifier are only editing aids.
+
+### Toolbar buttons
+
+<p>The panel groups five tools, history controls, cursor and axes toggles, then Copy and Save. The numbers above the image match the table below. The small numbers inside the drawing-tool buttons are stroke widths in captured-image pixels.</p>
+
+[![Screenshot toolbar numbered from 1 to 11: Select, Draw, Arrow, Rectangle, Blur, Undo, Redo, Cursor, Axes, Copy and Save](./img/screenshot-toolbar.png)](./img/screenshot-toolbar.png)
+
+| No. | Button | What it does | Bundled shortcut |
+| --- | --- | --- | --- |
+| 1 | **Select** | Drag to choose the crop. Hold `Space` while dragging to move the existing crop instead of drawing a new one. | `V`; hold `Space` to move |
+| 2 | **Draw** | Draw a freehand stroke, or click for a dot. Activate the selected button again to open its color palette. | `B` |
+| 3 | **Arrow** | Drag from the tail to the arrowhead. It has its own color, width and palette. | `A` |
+| 4 | **Rectangle** | Drag between opposite corners to draw an outline; it has no fill. It also has independent color, width and palette settings. | `D` |
+| 5 | **Blur** | Drag a rectangle to blur the frozen image beneath the drawings. The three segments below the icon show Low, Medium or High strength. Clicking this button selects Blur; it does not cycle the strength. | `R` |
+| 6 | **Undo** | Remove the last completed drawing or blur edit. During a gesture, discard the unfinished edit instead. Grey means there is nothing to undo. | `Ctrl+Z` |
+| 7 | **Redo** | Restore the last undone edit. Grey means there is nothing to redo. A new completed edit clears the redo history. | `Ctrl+Shift+Z` or `Ctrl+Y` |
+| 8 | **Cursor** | Include or exclude the pointer captured when the editor opened. An accent stripe below the icon means it is included; the icon itself stays the same. | `P` |
+| 9 | **Axes** | Toggle horizontal/vertical drawing constraints for Draw, Arrow and Rectangle. This is **not** the crop-move button. An accent stripe means the mode is enabled. | `X`; hold `Shift_L` temporarily |
+| 10 | **Copy** | Copy the current crop and edits to the clipboard as PNG, without creating a file. | `Ctrl+C` |
+| 11 | **Save** | Save the crop and edits to the configured file path and also copy them to the clipboard. Finish any active gesture first. | `Ctrl+S`; `Enter` when no control is keyboard-focused |
+
+These are **configured bindings from the bundled default config**, not hidden hard-coded keys. Existing configs need the editor bindings; see [Key Bindings](./Configuration:-Key-Bindings.md#screenshot-screenshot-screen-screenshot-window). Editor-local bindings do not take over the same keys in applications when the editor is closed.
+
+The active tool's **icon** uses the accent color. The bottom stripe on Draw, Arrow and Rectangle shows that tool's **drawing color**, which can be different from the accent. Cursor and Axes use their stripe as an on/off indicator instead. Blur uses one, two or three filled segments.
+
+### Color palette
+
+<p>The color menu belongs to the selected Draw, Arrow or Rectangle tool. It is a palette of configured swatches, not a separate text, fill or eyedropper tool. Each colored tool keeps its own color, width and palette.</p>
+
+[![The Draw color palette with blue checked, a blue stripe on Draw, an independent width indicator, and the native hex-color and shortcut tooltip](./img/screenshot-palette.png)](./img/screenshot-palette.png)
+
+1. Select **Draw**, **Arrow** or **Rectangle**. Selecting a different tool does not open the menu.
+2. Click that selected tool again, or press `C`, to open its palette. There is no separate palette button in the main toolbar. Repeated-click opening depends on `open-palette-on-click`.
+3. Click a swatch, or use the configured `1`–`7` bindings while the palette is open. The order follows the configured palette: left to right, then the next row. A border and checkmark identify the active color.
+4. By default, choosing a color closes the menu. Set `close-palette-on-select false` to keep it open. Clicking outside the menu dismisses it without painting; start a new gesture to draw.
+5. Draw a new stroke to use the chosen color. Existing edits are not recolored. Switching tools preserves each tool's current color and width.
+
+Hovering a swatch or focusing it with the keyboard shows its hex color and configured shortcut. `Tab` / `Shift+Tab` cycle through enabled toolbar controls and then the open palette; `Enter` activates the focused control. `Escape` closes the palette first. Keyboard focus has an extra accent outline and does not by itself change the active tool.
+
+The palette accepts **one to seven opaque colors** per tool. To change the available swatches, edit that tool's `palette` in the config; see [Brush, arrow and rectangle](#brush-arrow-and-rectangle). The menu edits only the active colored tool, not every tool at once.
+
+### Adjusting tools and the magnifier
+
+<p>The wheel and <code>Minus</code>/<code>Equal</code> bindings adjust a value according to context. Hover the control you want to change; the selected drawing tool does not have to change.</p>
+
+- Over **Draw**, **Arrow** or **Rectangle**, adjust that tool's width. The number above its icon changes; new strokes use the new value.
+- Over **Blur**, adjust strength between Low, Medium and High. It stops at the endpoints rather than wrapping.
+- Over the **canvas**, adjust the pixel magnifier through `1×`, `2×`, `4×`, `8×`, `16×`, `32×`, up to the configured limit. It starts hidden at `1×` with the default settings and appears from `2×`.
+- Over Select, palette controls or other toolbar UI, the context action does not zoom the canvas.
+
+**Keyboard focus takes priority over hover.** Move the mouse to clear keyboard focus and return to pointer-based adjustment. This is magnifier zoom, not desktop zoom. The lens shows the frozen image plus edits, and it never appears in the export.
+
+### Toolbar placement examples
+
+<p>The panel can sit at either screen edge with left, center or right alignment. These six real captures use the same screenshot and crop; only <code>position</code> and <code>align</code> inside <code>screenshot.toolbar</code> change. The palette and tooltips follow the panel and open toward the center of the screen.</p>
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-toolbar-top-left.png"><img src="./img/screenshot-toolbar-top-left.png" alt="Screenshot toolbar placed at the top left" width="100%"></a>
+      <h4>Top left</h4>
+      <p><code>position "top"</code>, <code>align "left"</code>. The panel follows the top and left margins.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-toolbar-top-center.png"><img src="./img/screenshot-toolbar-top-center.png" alt="Screenshot toolbar centered at the top" width="100%"></a>
+      <h4>Top center</h4>
+      <p><code>position "top"</code>, <code>align "center"</code>. This is the default placement.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-toolbar-top-right.png"><img src="./img/screenshot-toolbar-top-right.png" alt="Screenshot toolbar placed at the top right" width="100%"></a>
+      <h4>Top right</h4>
+      <p><code>position "top"</code>, <code>align "right"</code>. The panel follows the top and right margins.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-toolbar-bottom-left.png"><img src="./img/screenshot-toolbar-bottom-left.png" alt="Screenshot toolbar placed at the bottom left" width="100%"></a>
+      <h4>Bottom left</h4>
+      <p><code>position "bottom"</code>, <code>align "left"</code>. Menus open upward, away from the bottom edge.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-toolbar-bottom-center.png"><img src="./img/screenshot-toolbar-bottom-center.png" alt="Screenshot toolbar centered at the bottom" width="100%"></a>
+      <h4>Bottom center</h4>
+      <p><code>position "bottom"</code>, <code>align "center"</code>. Center the panel between the horizontal margins.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-toolbar-bottom-right.png"><img src="./img/screenshot-toolbar-bottom-right.png" alt="Screenshot toolbar placed at the bottom right" width="100%"></a>
+      <h4>Bottom right</h4>
+      <p><code>position "bottom"</code>, <code>align "right"</code>. The panel follows the bottom and right margins.</p>
+    </td>
+  </tr>
+</table>
+
+For example:
+
+```kdl
+screenshot {
+    toolbar {
+        position "bottom"
+        align "right"
+    }
+}
+```
+
+Merge this into your existing `screenshot` block. Margins, sizes, colors and opacity are independent settings; see [Toolbar](#toolbar) and the [Customization example](#customization-example). Placement updates in an open editor after config reload, but waits until an active gesture ends.
+
+### Toolbar spacing and padding
+
+<p><code>margin</code> controls the distance from the output edges, not the space inside the panel. These crops keep top-left placement and the same button/icon sizes; only the margins change. Values are logical pixels, so the 2× output used here doubles their visible pixel distance.</p>
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-toolbar-margin-8.png"><img src="./img/screenshot-toolbar-margin-8.png" alt="Top-left screenshot toolbar with all margins set to 8 logical pixels" width="100%"></a>
+      <h4>Small outer margins</h4>
+      <p>All four margins are <code>8</code>, the default. The panel stays close to the top-left output corner.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-toolbar-margin-40.png"><img src="./img/screenshot-toolbar-margin-40.png" alt="The same toolbar moved inward with all margins set to 40 logical pixels" width="100%"></a>
+      <h4>More outer space</h4>
+      <p>All four margins are <code>40</code>. The whole panel moves inward; its buttons and internal spacing do not grow.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-toolbar-margin-asymmetric.png"><img src="./img/screenshot-toolbar-margin-asymmetric.png" alt="Screenshot toolbar with top margin 24 and left margin 96 logical pixels" width="100%"></a>
+      <h4>Independent sides</h4>
+      <p><code>top=24</code>, <code>left=96</code>, <code>right=8</code>, <code>bottom=8</code>. Horizontal and vertical offsets are independent.</p>
+    </td>
+  </tr>
+</table>
+
+The third example uses:
+
+```kdl
+screenshot {
+    toolbar {
+        position "top"
+        align "left"
+        margin top=24 right=8 bottom=8 left=96
+    }
+}
+```
+
+There is **no configurable `padding` or group-gap setting**. Inner edge padding and gaps between button groups are fixed. To change the space around each icon, adjust `button-size` and `icon-size`: larger buttons with the same icon size leave more room inside each button. `icon-size` must not exceed `button-size`. See [Toolbar](#toolbar) for alignment and small-output behavior.
+
+### Interface color examples
+
+<p>UI colors are separate from drawing colors. These captures keep the same crop, red annotations and 8× magnifier while reloading the interface theme. The toolbar, selection frame, outside dimming and magnifier change; the existing drawings do not.</p>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="./img/screenshot-theme-dark.png"><img src="./img/screenshot-theme-dark.png" alt="Default dark screenshot editor with pale blue accent, white crop and magnifier borders, and red annotations" width="100%"></a>
+      <h4>Default dark UI</h4>
+      <p>A dark panel, pale-blue active icon, white crop and lens borders, and black dimming. Red remains the drawing color.</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="./img/screenshot-theme-light.png"><img src="./img/screenshot-theme-light.png" alt="Light violet screenshot toolbar with dark icons, violet selection and magnifier colors, and unchanged red annotations" width="100%"></a>
+      <h4>Light violet UI</h4>
+      <p>A light panel with dark icons, violet accent, crop frame, dimming and magnifier grid. None of this recolors the red edits.</p>
+    </td>
+  </tr>
+</table>
+
+Merge these settings into your existing `screenshot` block for the light variant:
+
+```kdl
+screenshot {
+    toolbar {
+        background-color "#eee9ff"
+        border-color "#7c3aed"
+        accent-color "#6d28d9"
+        icon-color "#24153b"
+        disabled-icon-color "#24153b66"
+        hover-color "#6d28d91f"
+        pressed-color "#6d28d940"
+    }
+    selection {
+        border-color "#c4a0ff"
+        dim-color "#201038"
+        dim-opacity 0.55
+    }
+    magnifier {
+        border-color "#c4a0ff"
+        grid-color "#6d28d980"
+        cross-highlight-color "#c4a0ff59"
+    }
+}
+```
+
+The palette and tooltips share the toolbar theme. `accent-color` highlights an active control; it is **not** a brush color. Axis guides have their own `axes.color` and `axes.opacity`. UI colors can include alpha; see [Units and colors](#units-and-colors).
+
+### Independent tool colors
+
+<p>Draw uses the <code>brush</code> configuration block; Arrow and Rectangle use their own blocks. Here Draw is blue, Arrow is green and Rectangle is orange, all at width 8. Each capture opens a different tool's palette: its checkmark and bottom stripe show that tool's color while the other edits keep theirs.</p>
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-tool-colors-draw.png"><img src="./img/screenshot-tool-colors-draw.png" alt="Draw palette with blue checked, blue underline, green arrow and orange rectangle" width="100%"></a>
+      <h4>Draw: blue</h4>
+      <p><code>brush.color "#0080ff"</code> sets the initial freehand color. The blue checkmark belongs only to Draw.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-tool-colors-arrow.png"><img src="./img/screenshot-tool-colors-arrow.png" alt="Arrow palette with green checked while the underline stays blue and rectangle stays orange" width="100%"></a>
+      <h4>Arrow: green</h4>
+      <p><code>arrow.color "#00c040"</code> is independent of the brush. Changing tools preserves their separate colors.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-tool-colors-rectangle.png"><img src="./img/screenshot-tool-colors-rectangle.png" alt="Rectangle palette with orange checked, independent of the blue Draw and green Arrow colors" width="100%"></a>
+      <h4>Rectangle: orange</h4>
+      <p><code>rectangle.color "#ff8000"</code> colors the outline, not a fill. Its palette does not edit Draw or Arrow.</p>
+    </td>
+  </tr>
+</table>
+
+```kdl
+screenshot {
+    brush {
+        width 8
+        color "#0080ff"
+    }
+    arrow {
+        width 8
+        color "#00c040"
+    }
+    rectangle {
+        width 8
+        color "#ff8000"
+    }
+}
+```
+
+After the config reload completes, open a **new editor session** to use these initial colors and widths. An already-open editor keeps its current tool values. For an immediate change, use that tool's palette; only new strokes use the selected color. These screenshots keep the seven default swatches per tool. To replace those choices, see [Custom color palettes](#custom-color-palettes) below. Tool colors must be opaque; see [Brush, arrow and rectangle](#brush-arrow-and-rectangle).
+
+### Custom color palettes
+
+<p><code>palette</code> replaces a tool's default color pool: it controls both the available swatches and their order, not just the selected color. These close-ups show three different lists from the configuration below. Select a tool, then activate it again or press <code>C</code> to open its own palette.</p>
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-custom-palette-draw.png"><img src="./img/screenshot-custom-palette-draw.png" alt="Custom Draw palette with exactly three swatches: violet, sky blue and pink" width="100%"></a>
+      <h4>Draw: 3 pastel colors</h4>
+      <p>Violet, sky blue, then pink. The list in <code>brush.palette</code> replaces the seven default swatches.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-custom-palette-arrow.png"><img src="./img/screenshot-custom-palette-arrow.png" alt="Custom Arrow palette with green, lime, yellow and orange in the first row and red in the second" width="100%"></a>
+      <h4>Arrow: 5 highlight colors</h4>
+      <p>Green, lime, yellow, orange, then red. The fifth color starts a second row; the order follows <code>arrow.palette</code>.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-custom-palette-rectangle.png"><img src="./img/screenshot-custom-palette-rectangle.png" alt="Custom Rectangle palette containing only white and slate grey" width="100%"></a>
+      <h4>Rectangle: 2 neutral colors</h4>
+      <p>Only white and slate grey. <code>rectangle.palette</code> is independent of both other tools' lists.</p>
+    </td>
+  </tr>
+</table>
+
+Merge these settings into your existing `screenshot` block:
+
+```kdl
+screenshot {
+    brush {
+        width 8
+        color "#a78bfa"
+        palette "#a78bfa" "#38bdf8" "#f9a8d4"
+    }
+    arrow {
+        width 8
+        color "#22c55e"
+        palette "#22c55e" "#a3e635" "#facc15" "#fb923c" "#ef4444"
+    }
+    rectangle {
+        width 8
+        color "#f8fafc"
+        palette "#f8fafc" "#64748b"
+    }
+}
+```
+
+`color` chooses the initial active color when the editor opens; **`palette` defines the pool of choices**. Each list accepts one to seven opaque colors. With the bundled `1`–`7` bindings, the number follows the configured order, left to right and then the next row: here `3` picks pink for Draw but yellow for Arrow. Choosing a swatch changes only that tool's future strokes, not existing edits.
+
+### Blur strength examples
+
+<p>Low, Medium and High use the same original demo text and the same rectangle below. Each blur was applied separately, not stacked over the previous level. The real button and tooltip show the selected strength above each result.</p>
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-blur-low.png"><img src="./img/screenshot-blur-low.png" alt="Low blur with one filled strength segment and the blurred demo text" width="100%"></a>
+      <h4>Low</h4>
+      <p>The lightest smoothing. One segment is filled below Blur; text shapes remain more recognizable.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-blur-medium.png"><img src="./img/screenshot-blur-medium.png" alt="Medium blur with two filled strength segments on the same demo text" width="100%"></a>
+      <h4>Medium</h4>
+      <p>The default strength. Two filled segments indicate stronger smoothing of the same source details.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-blur-high.png"><img src="./img/screenshot-blur-high.png" alt="High blur with three filled strength segments on the same demo text" width="100%"></a>
+      <h4>High</h4>
+      <p>The strongest smoothing. All three segments are filled. This still does not make blur secure redaction.</p>
+    </td>
+  </tr>
+</table>
+
+Select Blur, hover its button, then scroll or use the configured `Minus` / `Equal` bindings. The strength is captured when a blur gesture starts: changing it does not update completed regions. Undo and redraw a region to apply another strength. Blur affects the frozen background beneath drawings, not the drawings themselves.
+
+**Do not rely on blur to protect sensitive information.** These examples deliberately use fake text. See [Blur](#blur) for overlap behavior and configuration.
+
+### Undo and redo
+
+<p>Each completed drawing or blur gesture is one history entry. Here Undo removes the blur and Redo restores exactly the same edit; the toolbar insets show which history buttons are available.</p>
+
+[![Blur applied, removed with Undo, then restored with Redo, with the real Undo and Redo button states](./img/screenshot-history.png)](./img/screenshot-history.png)
+
+Changing the tool, its color/width or the crop does not create a history entry. A new completed edit clears the redo stack. History lasts only until the editor closes. During a gesture, Undo discards the unfinished edit instead of committing it.
+
+### Drawing with axis guides
+
+<p>Axes constrain Draw, Arrow and Rectangle to horizontal or vertical movement. In this mid-drag capture, the arrow remains horizontal even though the pointer has moved below it. The dashed guides and the free pointer are editing aids, not exported marks.</p>
+
+[![An arrow constrained horizontally by axis guides while the pointer remains below the drawn endpoint](./img/screenshot-axes.png)](./img/screenshot-axes.png)
+
+Click button **9** or press `X` to toggle the mode. Holding `Shift_L` enables it temporarily; releasing the key restores the toggle state. This is **axis constraint**, not a square/aspect-ratio lock and not crop movement. For Rectangle, setting width and then height uses the hold/reanchor sequence described in [Axis guides](#axis-guides).
+
+### Axes and Draw
+
+<p>These close-ups show the same mouse path with the button still held. Without axes, Draw follows the pointer freely. With axes enabled, the first movement chooses a horizontal or vertical ray and the stroke stays on that ray even when the pointer drifts away.</p>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="./img/screenshot-axes-draw-off.png"><img src="./img/screenshot-axes-draw-off.png" alt="Draw without axes following a bent pointer path down and to the right" width="100%"></a>
+      <h4>Axes off: freehand</h4>
+      <p>The blue stroke follows both coordinates of the pointer, including every change of direction.</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="./img/screenshot-axes-draw-on.png"><img src="./img/screenshot-axes-draw-on.png" alt="The same Draw gesture constrained to a horizontal line, with dashed guides and the free pointer below its endpoint" width="100%"></a>
+      <h4>Axes on: straight stroke</h4>
+      <p>The initial movement chose horizontal. The line stays level while the crosshair remains below its projected endpoint.</p>
+    </td>
+  </tr>
+</table>
+
+Use `X` for a persistent constraint or hold `Shift_L` temporarily with the bundled bindings. Guides and the free crosshair do not become part of the drawing.
+
+### Axes and Rectangle
+
+<p>Rectangle is already axis-aligned without axes. Axes constrain its moving opposite corner; they do not rotate the rectangle or force a square. The two held-axes stages below keep the first corner fixed and the mouse button down while setting width, then height.</p>
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-axes-rectangle-off.png"><img src="./img/screenshot-axes-rectangle-off.png" alt="Rectangle without axes, with its moving corner at the free pointer position" width="100%"></a>
+      <h4>Axes off: both dimensions</h4>
+      <p>The opposite corner follows the pointer horizontally and vertically. The outline remains an ordinary axis-aligned rectangle.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-axes-rectangle-width.png"><img src="./img/screenshot-axes-rectangle-width.png" alt="Rectangle with axes held during the width stage, showing a thin horizontal preview and the pointer below it" width="100%"></a>
+      <h4>Hold axes: set width</h4>
+      <p>Hold Shift and drag horizontally. Height is still zero, so the preview is only a thin line on the horizontal guide.</p>
+    </td>
+    <td width="33%" valign="top">
+      <a href="./img/screenshot-axes-rectangle-height.png"><img src="./img/screenshot-axes-rectangle-height.png" alt="Rectangle after reanchoring the held axes at the right corner and dragging vertically, keeping its original first corner fixed" width="100%"></a>
+      <h4>Reanchor: add height</h4>
+      <p>Release and press Shift again, then move vertically. The guide moves to the drawn corner; the first corner and chosen width stay fixed.</p>
+    </td>
+  </tr>
+</table>
+
+For this sequence, start with the Axes toggle off. Hold `Shift_L`, press the mouse button at the first corner, then move horizontally. **Keep the mouse button down** and release/repress Shift **without moving the pointer between the key events**; this reanchors at the projected corner, not at the free crosshair. Move vertically to set height. Release the mouse to commit the one rectangle, then release Shift. See [Axis guides](#axis-guides) for ray switching and hold behavior.
+
+### Including the captured cursor
+
+<p>Button 8 controls the pointer that was frozen with the desktop when the editor opened, not the live pointer you use to operate the editor. The accent stripe under the cursor icon indicates inclusion; the icon shape stays the same in both states.</p>
+
+[![The same frozen image with its captured pointer included and excluded, plus the actual cursor button state](./img/screenshot-pointer.png)](./img/screenshot-pointer.png)
+
+Click the button or press `P` to toggle it. The setting affects both clipboard and file export. You can choose the initial state on the opening action, for example `screenshot show-pointer=false`.
+
+### Copy, save and cancel
+
+<p>Copy and Save both export the selected crop with its completed edits and close the editor on success. This is the actual saved image from the overview: the toolbar, magnifier, crop border and other editor overlays are not part of it.</p>
+
+[![The real exported crop with the arrow, rectangle, freehand line and blur, without the screenshot editor controls or magnifier](./img/screenshot-export.png)](./img/screenshot-export.png)
+
+- **Copy / `Ctrl+C`:** PNG clipboard only; no file is created.
+- **Save / `Ctrl+S`:** save to `screenshot-path` and also copy to the clipboard. The file can be PNG, WebP or AVIF; clipboard images remain PNG.
+- **`Enter`:** activate a keyboard-focused control, or save and copy when nothing is focused. `Ctrl+C` / `Ctrl+S` export directly regardless of keyboard focus.
+- **`Escape`:** close the palette first, cancel an unfinished gesture next, or close the editor when there is nothing left to cancel. `Space` moves the crop while held; it does not save.
+
+Finish the current mouse/touch gesture before exporting. Paths, formats and bindings are configured outside the appearance block; see [Opening, bindings and export](#opening-bindings-and-export).
+
 ### Default configuration
 
 ```kdl
@@ -349,5 +752,5 @@ When partial settings are merged, including through [include files](./Configurat
 Validate your configuration before trying it:
 
 ```sh
-niri validate --config ~/.config/niri/config.kdl
+niri-charm validate --config "${XDG_CONFIG_HOME:-$HOME/.config}/niri-charm/config.kdl"
 ```

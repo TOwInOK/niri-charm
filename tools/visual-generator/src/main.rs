@@ -985,7 +985,7 @@ fn hero_obsidian_text(
 
     let origin = interior + Size::from((149., 106.));
     let lines: [(&str, &TextStyle, f64, f64); 4] = [
-        ("Your windows. In Sweaters", &title, 0., 0.),
+        ("Niri Charm", &title, 0., 0.),
         ("Procedural knit borders for niri.", &body, 15., 46.),
         ("Happy New Year! 🎄", &body, 0., 97.),
         ("It looks like carpets, doesn’t it?", &italic, 0., 146.),

@@ -1,18 +1,18 @@
 #!/bin/sh
 set -eu
 
-variant_bin=/usr/local/bin/niri-sweaters
-default_config=/usr/local/share/niri-sweaters/default-config.kdl
-service=niri-sweaters.service
-shutdown=niri-sweaters-shutdown.target
+variant_bin=/usr/local/bin/niri-charm
+default_config=/usr/local/share/niri-charm/default-config.kdl
+service=niri-charm.service
+shutdown=niri-charm-shutdown.target
 config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
-config="$config_home/niri-sweaters/config.kdl"
+config="$config_home/niri-charm/config.kdl"
 
 if [ ! -e "$config" ] && [ ! -L "$config" ]; then
     mkdir -p "$(dirname -- "$config")"
     if [ -f "$config_home/niri/config.kdl" ]; then
         (
-            config_copy=$(mktemp -d "$config_home/.niri-sweaters.XXXXXX")
+            config_copy=$(mktemp -d "$config_home/.niri-charm.XXXXXX")
             trap 'chmod -R u+w -- "$config_copy"; rm -rf -- "$config_copy"' 0
             # Dereference Home Manager links without losing private or executable modes.
             cp -RL --preserve=mode -- "$config_home/niri/." "$config_copy/"
@@ -50,7 +50,7 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
     if systemctl --user -q is-active "$service"; then
-      echo 'A Niri Sweaters session is already running.'
+      echo 'A Niri Charm session is already running.'
       exit 1
     fi
 

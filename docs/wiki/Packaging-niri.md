@@ -30,27 +30,27 @@ Doing this will make niri appear in GDM and other display managers.
 
 See the [Integrating niri](./Integrating-niri.md) page for further information on distribution integration.
 
-### Niri Sweaters with dinit
+### Niri Charm with dinit
 
-The separate service definitions are in `resources/niri-sweaters/dinit/`. Install them alongside the stock `niri` and `niri.target` services, not over them:
+The separate service definitions are in `resources/niri-charm/dinit/`. Install them alongside the stock `niri` and `niri.target` services, not over them:
 
 | File                                                                                                  | Destination                                  |
 | ----------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `target/release/niri` (built with `--no-default-features --features dinit,dbus,xdp-gnome-screencast`) | `/usr/local/bin/niri-sweaters`               |
-| `resources/niri-sweaters/dinit/niri-sweaters`                                                         | `/usr/lib/dinit.d/user/niri-sweaters`        |
-| `resources/niri-sweaters/dinit/niri-sweaters.target`                                                  | `/usr/lib/dinit.d/user/niri-sweaters.target` |
+| `target/release/niri` (built with `--no-default-features --features dinit,dbus,xdp-gnome-screencast`) | `/usr/local/bin/niri-charm`               |
+| `resources/niri-charm/dinit/niri-charm`                                                         | `/usr/lib/dinit.d/user/niri-charm`        |
+| `resources/niri-charm/dinit/niri-charm.target`                                                  | `/usr/lib/dinit.d/user/niri-charm.target` |
 
 Before starting, create the log directory and a separate config (or copy your existing config with its includes):
 
 ```sh
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-mkdir -p "$HOME/.local/share/niri-sweaters" "$config_home/niri-sweaters"
-test -e "$config_home/niri-sweaters/config.kdl" || cp resources/default-config.kdl "$config_home/niri-sweaters/config.kdl"
+mkdir -p "$HOME/.local/share/niri-charm" "$config_home/niri-charm"
+test -e "$config_home/niri-charm/config.kdl" || cp resources/default-config.kdl "$config_home/niri-charm/config.kdl"
 ```
 
-Start `dinitctl --user start niri-sweaters.target` from your login environment with a running user dinit instance and its `dbus` service. Ensure the manager has the login environment and `niri-sweaters` on its `PATH`. This is direct dinit startup; the systemd-oriented `install-niri-sweaters` installer is not used here.
+Start `dinitctl --user start niri-charm.target` from your login environment with a running user dinit instance and its `dbus` service. Ensure the manager has the login environment and `niri-charm` on its `PATH`. This is direct dinit startup; the systemd-oriented `install-niri-charm` installer is not used here.
 
-The service reads `$XDG_CONFIG_HOME/niri-sweaters/config.kdl` (falling back to `~/.config/niri-sweaters/config.kdl`) and writes `~/.local/share/niri-sweaters/niri.log`. Session dependencies belong in `dinit.d/niri-sweaters.d/`. Stop with `dinitctl --user stop niri-sweaters`; stock niri service files and config remain unchanged.
+The service reads `$XDG_CONFIG_HOME/niri-charm/config.kdl` (falling back to `~/.config/niri-charm/config.kdl`) and writes `~/.local/share/niri-charm/niri.log`. Session dependencies belong in `dinit.d/niri-charm.d/`. Stop with `dinitctl --user stop niri-charm`; stock niri service files and config remain unchanged.
 
 ### Recommended dependencies
 

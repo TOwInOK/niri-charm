@@ -1,38 +1,51 @@
 <div align="center">
-  <h1>niri-sweaters</h1>
-  <p><strong>Your windows. In sweaters.</strong></p>
-  <img src="docs/assets/knit-hero.webp" alt="Zed, Oh My Pi, Helix, and Obsidian windows with knitted borders" width="800">
-  <p>A <a href="https://github.com/niri-wm/niri">niri</a> fork with knitted window borders, desktop zoom, and a built-in screenshot editor.<br>Dress each app in its own colours, magnify your desktop, annotate screenshots, and select regions for recording.</p>
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/wiki/logo/niri-logo.svg">
+    <img src="docs/assets/niri-logo-glint.svg" alt="niri logo" width="280">
+  </picture>
+  <h1>niri-charm</h1>
+  <p>A <a href="https://github.com/niri-wm/niri">niri</a> fork with <strong>knitted borders, desktop zoom, a screenshot editor, and region-selection IPC.</strong></p>
+  <p>Installs alongside stock niri, with its own session and config.</p>
   <p>
-    <a href="#features">Features</a> ·
-    <a href="#patterns">Patterns</a> ·
-    <a href="#in-action">In action</a> ·
+    <a href="#what-the-fork-adds">What the fork adds</a> ·
     <a href="#install">Install</a> ·
     <a href="#configure">Configure</a> ·
-    <a href="#screenshot-editor">Screenshot editor</a> ·
-    <a href="#region-ipc">Region IPC</a>
+    <a href="#wiki">Wiki</a>
   </p>
 </div>
 
-## Features
+## What the fork adds
 
-- **[Knitted borders](#knit).** Six patterns, per-app colours, and live config reloads; borders follow window geometry and animations.
-- **[Zoom](#zoom).** Magnify with keyboard, mouse wheel, or touchpad pinch; follow the pointer, lock the view, or hold a key for temporary zoom. Transition smoothly into Overview.
-- **[Screenshot editor](#screenshot-editor).** Crop, draw freehand, add arrows and rectangles, and blur regions. Independent tool colours and widths, undo/redo, axis guides, and a pixel magnifier; export PNG, WebP or AVIF and copy as PNG.
-- **[Region IPC](#region-ipc).** Select an area for its coordinates and display a recording frame on one monitor without including the frame in captures.
-- **[Separate session](#install).** Run alongside stock Niri with its own config.
-
-## Patterns
-
-![Stockinette, rib, checker, zigzag, diamond, and dots](docs/assets/knit-patterns.webp)
-
-## In action
-
-[![A desktop with app-specific knitted borders](docs/assets/knit-desktop.png)](docs/assets/knit-desktop.png)
-
-https://github.com/user-attachments/assets/7dcf712c-5059-4ca8-9076-512646c47815
-
-[Example config](resources/knit-preview.kdl)
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/assets/knit-patterns.webp"><img src="docs/assets/knit-patterns.webp" alt="Six knitted border patterns: stockinette, rib, checker, zigzag, diamond, and dots" width="100%"></a>
+      <h3>Knitted borders</h3>
+      <p>Six yarn patterns with per-app colours. Borders follow window geometry and animations; changes reload live.</p>
+      <p><a href="#knit">Enable</a> · <a href="docs/wiki/Knitted-Border-Tuning.md">Wiki</a> · <a href="https://github.com/user-attachments/assets/7dcf712c-5059-4ca8-9076-512646c47815">Demo</a></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/assets/zoom-preview.webp"><img src="docs/assets/zoom-preview.webp" alt="The same Niri Charm desktop at 1× and 2× zoom, enlarging both the text and the knitted window border" width="100%"></a>
+      <h3>Desktop zoom</h3>
+      <p>Magnify without resizing windows. Use keys, the wheel, or pinch; follow the pointer, lock the view, or zoom temporarily while holding a key.</p>
+      <p><a href="#zoom">Enable</a> · <a href="docs/wiki/Accessibility.md#desktop-zoom">Wiki</a> · <a href="docs/assets/zoom_demonstration.mp4">Demo</a></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/assets/screenshot-editor-preview.webp"><img src="docs/assets/screenshot-editor-preview.webp" alt="The screenshot editor with a real arrow, rectangle, freehand underline, blurred demo text, toolbar, and pixel magnifier" width="100%"></a>
+      <h3>Crop and annotate screenshots</h3>
+      <p>Draw, add arrows and shapes, blur regions, and undo edits without opening another app. Inspect pixels with the magnifier; export PNG, WebP, or AVIF.</p>
+      <p><a href="#screenshot-editor">Enable</a> · <a href="docs/wiki/Configuration:-Screenshot.md">Wiki</a></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/assets/region-ipc-preview.webp"><img src="docs/assets/region-ipc-preview.webp" alt="Compositor-level region selection and marking: an on-screen guide frame, logical IPC coordinates, and the selected area" width="100%"></a>
+      <h3>Select and mark screen regions</h3>
+      <p>Select a desktop area and get its coordinates over IPC, or outline it with a compositor-drawn frame. Reuse the region in scripts, screenshots, or recording; the frame stays out of Niri captures.</p>
+      <p><a href="#region-ipc">Use</a> · <a href="docs/wiki/IPC.md#region-selection-and-recording-frame">Wiki</a></p>
+    </td>
+  </tr>
+</table>
 
 ## Install
 
@@ -41,27 +54,28 @@ https://github.com/user-attachments/assets/7dcf712c-5059-4ca8-9076-512646c47815
 Install [Rust](https://rustup.rs/), Git, and the [build dependencies](docs/wiki/Getting-Started.md#building), then run:
 
 ```sh
-git clone https://github.com/TOwInOK/niri-sweaters.git
-cd niri-sweaters
-./scripts/install-niri-sweaters
+git clone https://github.com/TOwInOK/niri-sweaters.git niri-charm
+cd niri-charm
+./scripts/install-niri-charm
 ```
 
-Log out and select **Niri Sweaters** in your display manager.
+The installer builds the fork and requests elevated permissions through `pkexec` or `run0` to install its binary and session files. It does not replace stock niri.
 
-### NixOS
+<details>
+<summary><strong>NixOS (flake)</strong></summary>
 
-Add the input and module to your system flake:
+Merge this input and module into your system flake, replacing `your-host` with your configuration name:
 
 ```nix
 {
-  inputs.niri-sweaters.url = "github:TOwInOK/niri-sweaters";
+  inputs.niri-charm.url = "github:TOwInOK/niri-sweaters";
 
-  outputs = { nixpkgs, niri-sweaters, ... }: {
+  outputs = { nixpkgs, niri-charm, ... }: {
     nixosConfigurations.your-host = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
         ./configuration.nix
-        niri-sweaters.nixosModules.default
+        niri-charm.nixosModules.default
       ];
     };
   };
@@ -72,13 +86,25 @@ Add the input and module to your system flake:
 sudo nixos-rebuild switch --flake .#your-host
 ```
 
-Log out and select **Niri Sweaters**. Your existing niri config is copied to `~/.config/niri-sweaters/` on first login without overwriting existing files.
+</details>
+
+Log out and select **Niri Charm** in your display manager. On first login, your existing niri config is copied to `~/.config/niri-charm/` without overwriting existing files. If there is no niri config, the session uses the bundled default.
+
+**Upgrading from Niri Sweaters:** before your first Charm login, copy your complete `niri-sweaters` config directory (including included files) to `niri-charm` under `$XDG_CONFIG_HOME` or `~/.config`. Do not overwrite an existing Charm config. This installer leaves the old session and its files untouched.
 
 ## Configure
 
-Edit `~/.config/niri-sweaters/config.kdl`; changes reload live. Merge the examples into your existing sections.
+Edit `~/.config/niri-charm/config.kdl` (or `$XDG_CONFIG_HOME/niri-charm/config.kdl`). Changes reload live. **Merge these snippets into your existing sections; do not duplicate `layout`, `binds`, or key bindings.**
+
+After editing, validate the config with the fork's binary:
+
+```sh
+niri-charm validate --config ~/.config/niri-charm/config.kdl
+```
 
 ### Knit
+
+Enable the border and choose a pattern and two yarn colours:
 
 ```kdl
 layout {
@@ -90,124 +116,44 @@ layout {
         inactive-color "#384136"
         knit {
             on
-            pattern "checker" // stockinette / rib / checker / zigzag / diamond / dots
-            accent-color "#bac6a6" // second yarn colour
-            stitch-size 8 // larger stitches mean fewer rows across the border
-            relief 0.65 // depth and shading
-            fuzz 0.15 // wool fluffiness
-        }
-    }
-}
-```
-
-#### Per-window patterns and colours
-
-```kdl
-window-rule {
-    match app-id=r#"^dev\.zed\.Zed$"#
-    border {
-        active-color "#526c89"
-        inactive-color "#3d4652"
-        knit {
-            pattern "rib"
-            accent-color "#8fa6bf"
-            // ...
-        }
-    }
-}
-window-rule {
-    match app-id=r#"^com\.mitchellh\.ghostty$"# title="^knit-desktop-helix$"
-    border {
-        active-color "#5a6b53"
-        inactive-color "#3d4652"
-        knit {
             pattern "checker"
-            accent-color "#9ba98e"
-            // ...
+            accent-color "#bac6a6"
+            stitch-size 8
         }
     }
 }
 ```
 
-[Tuning guide](docs/wiki/Knitted-Border-Tuning.md) · [All knit options](docs/wiki/Configuration:-Layout.md#procedural-knit-border) · [Per-app rules](docs/wiki/Configuration:-Window-Rules.md#focus-ring-and-border)
+[Per-app rules](docs/wiki/Configuration:-Window-Rules.md#focus-ring-and-border) · [Size and colour guide](docs/wiki/Knitted-Border-Tuning.md) · [Desktop example](docs/assets/knit-desktop.png) · [Example config](resources/knit-preview.kdl)
 
 ### Zoom
 
-Magnify the desktop without resizing windows. The view follows the pointer outside a central deadzone; lock it for a steady view, or hold a shortcut for a temporary close-up. Opening Overview smoothly ends the zoom session.
+Toggle 2× with `Mod+Z`, hold `Mod+X` for temporary zoom, or use `Mod` + mouse wheel. `Mod+Shift+Z` locks pointer-follow; `Mod+0` resets the view.
 
 ```kdl
-zoom {
-    max-zoom 100.0 // maximum zoom level
-    increment-factor 1.2 // zoom step multiplier
-    deadzone-size 0.2 // central area with no pointer-follow movement
-
-    follow-min-speed 50 // follow speed just outside the deadzone
-    follow-max-speed 6000 // follow speed far outside the deadzone
-
-    sampling "auto" threshold=4.0 // linear below 4x; nearest at 4x and above (sharp pixels)
-    // sampling "linear"
-    // sampling "nearest"
-    pinch-fingers 3
-
-    // use to tune the deadzone and follow speeds
-    debug {
-        deadzone // red outline of the pointer-follow deadzone
-        focal-point // fixed point of the zoom transform, not the deadzone boundary; dimmed at 1x
-    }
-}
-
-
 binds {
-    Mod+Z { zoom 2.0; } // toggle zoom
-    Mod+X { zoom 2.0 hold=true; } // zoom while held; restore the previous view on release
-    // Mod+X { zoom 2.0 hold=true lock=true; } // also lock pointer-follow while held
-
-    Mod+Shift+Z { zoom-lock; } // toggle pointer-follow lock
-
+    Mod+Z { zoom 2.0; }
+    Mod+X { zoom 2.0 hold=true; }
+    Mod+Shift+Z { zoom-lock; }
     Mod+0 { reset-zoom; }
     Mod+WheelScrollUp { zoom-in; }
     Mod+WheelScrollDown { zoom-out; }
 }
 ```
 
-[Zoom controls](docs/wiki/Accessibility.md#desktop-zoom) · [All zoom settings](docs/wiki/Configuration:-Miscellaneous.md#zoom) · [Key bindings](docs/wiki/Configuration:-Key-Bindings.md#zoom)
+[Pinch gestures, per-monitor behaviour and capture rules](docs/wiki/Accessibility.md#desktop-zoom) · [All zoom actions](docs/wiki/Configuration:-Key-Bindings.md#zoom)
 
 ### Screenshot editor
 
-Annotate a frozen desktop frame without opening another app. Draw, Arrow and Rectangle have independent colours, widths and palettes. Undo/redo covers drawings, shapes and blur regions; moving the crop does not move your annotations.
-
-Appearance belongs in the root `screenshot` block; shortcuts belong in `binds`. For example:
+`Print` opens the editor. Pick tools from the toolbar; the editing and export shortcuts below only take effect while the editor is open.
 
 ```kdl
-screenshot {
-    brush { color "#ff0000"; width 4; }
-    arrow { color "#00c040"; width 8; }
-    rectangle { color "#0080ff"; width 6; }
-    axes { color "#80c7ff"; opacity 0.6; }
-    blur { strength "medium"; }
-}
-```
+screenshot-format "png" // or "webp" / "avif"; clipboard always uses PNG
 
-Merge these shortcuts into your existing `binds` block. Editor-only shortcuts pass through when the editor is closed:
-
-```kdl
 binds {
     Print { screenshot; }
-    V { screenshot-tool "select"; }
-    B { screenshot-tool "draw"; }
-    A { screenshot-tool "arrow"; }
-    D { screenshot-tool "rectangle"; }
-    R { screenshot-tool "blur"; }
-    C { screenshot-toggle-palette; }
     Ctrl+Z { screenshot-undo; }
     Ctrl+Shift+Z { screenshot-redo; }
-    X { screenshot-toggle-axes; }
-    Shift_L repeat=false { screenshot-toggle-axes hold=true; }
-    Space repeat=false { screenshot-move-selection-hold; }
-    Tab { screenshot-focus-next; }
-    Shift+Tab { screenshot-focus-previous; }
-    WheelScrollUp { screenshot-context "+1"; }
-    WheelScrollDown { screenshot-context "-1"; }
     Ctrl+C { confirm-screenshot write-to-disk=false; }
     Ctrl+S { confirm-screenshot; }
     Return { screenshot-confirm; }
@@ -215,38 +161,38 @@ binds {
 }
 ```
 
-The wheel adjusts the keyboard-focused tool first, otherwise the tool under the pointer; over the canvas it changes magnifier zoom. Other controls block the adjustment, and moving the pointer clears keyboard focus. The selected drawing tool does not change. Hold Shift for axis-constrained drawing, or Space to move the crop with the pointer.
+`Ctrl+C` copies; `Ctrl+S` saves and copies. Finish the current drawing gesture before exporting. **Blur is not secure redaction:** sensitive information may still be recoverable.
 
-Enter activates the focused control, or saves and copies when nothing is focused. Ctrl+S always requests export; Escape closes the palette, cancels a gesture, then closes the editor. Unfinished gestures are not exported.
-
-Save as PNG, WebP or AVIF using the root `screenshot-format` setting or a per-export override such as `confirm-screenshot format="webp" quality=85`. The clipboard stays PNG. Toolbar, guides, crop frame and magnifier never appear in the export. Blur affects the frozen image beneath annotations; **it is not a guarantee that sensitive information cannot be recovered**.
-
-[All screenshot settings](docs/wiki/Configuration:-Screenshot.md) · [Full demo config and shortcuts](docs/wiki/Configuration:-Screenshot.md#full-feature-demo-configuration) · [Demo config](resources/knit-desktop.kdl) · [Architecture and IPC](docs/hiw/screenshot.md)
+[Toolbar, colours, guides and magnifier](docs/wiki/Configuration:-Screenshot.md) · [All editor actions](docs/wiki/Configuration:-Key-Bindings.md#screenshot-screenshot-screen-screenshot-window)
 
 ### Region IPC
 
-Select an area for a recorder, then mark it with a coloured frame. Unlike window borders, this frame stays fixed on one monitor across zoom, Overview, and workspace switches. It does not receive input or appear in screenshots and screencasts.
-
-Drag with the left mouse button and release to select; **Escape** cancels. JSON returns the output name and coordinates in logical pixels relative to that output. `--format slurp` instead returns global logical coordinates as `x,y widthxheight`.
-
-- **Screenshots while zoomed:** enable zoom lock on the capture monitor **before selecting** and keep it locked until the frame is captured. Selection pauses pointer-follow only while dragging; after release, the view can move before the screenshot is taken. Check `niri-sweaters msg --json zoom` first: `niri-sweaters msg action zoom-lock` toggles the lock on the output under the pointer, so do not toggle an already locked view. After capture, cancellation, or an error, restore the previous lock state—unlock only if your script enabled the lock.
-- **Video or coordinates only:** zoom lock is not required. Leave pointer-follow available so you can pan the zoomed desktop while recording; the selected region itself stays fixed.
-
-This example uses `jq` to put a frame around the exact selection:
+No config block is needed. Run these commands in a Niri Charm session to select an area and show its frame (requires `jq`):
 
 ```sh
-region=$(niri-sweaters msg --json select-region) || exit 1
-printf '%s\n' "$region" | jq -c '{RegionFrame:{Set:{region:.,color:"yellow"}}}' | niri-sweaters msg raw-request
-niri-sweaters msg region-frame set-color red
-niri-sweaters msg --json region-frame get
-niri-sweaters msg region-frame set-color orange
-niri-sweaters msg region-frame clear
+region=$(niri-charm msg --json select-region) || exit 1
+printf '%s\n' "$region" | jq -c '{RegionFrame:{Set:{region:.,color:"red"}}}' | niri-charm msg raw-request
 ```
 
-A recording script can use **yellow → red → orange** for countdown, recording, and WebP conversion, then clear the frame when finished. Niri provides the selection and frame; a recorder such as `wf-recorder` captures the area, and `ffmpeg` converts it to animated WebP. Convert logical coordinates to physical pixels using the output scale when required by the recorder.
+This does **not** start recording. Clear the frame when finished with `niri-charm msg region-frame clear`. For coordinates only, use `niri-charm msg select-region --format slurp`.
 
-[IPC command reference](docs/wiki/IPC.md#region-selection-and-recording-frame)
+[Coordinate systems, zoom locking and recorder integration](docs/wiki/IPC.md#region-selection-and-recording-frame)
+
+## Wiki
+
+These links point to the fork's documentation, including its added settings and actions:
+
+| Feature | Guide | Reference |
+| --- | --- | --- |
+| Knitted borders | [Sizes, patterns and palettes](docs/wiki/Knitted-Border-Tuning.md) | [All knit options](docs/wiki/Configuration:-Layout.md#procedural-knit-border) |
+| Desktop zoom | [Controls and behaviour](docs/wiki/Accessibility.md#desktop-zoom) | [Settings](docs/wiki/Configuration:-Miscellaneous.md#zoom-1) · [Actions](docs/wiki/Configuration:-Key-Bindings.md#zoom) |
+| Screenshot editor | [Tools and appearance](docs/wiki/Configuration:-Screenshot.md) | [Bindings and export](docs/wiki/Configuration:-Screenshot.md#opening-bindings-and-export) |
+| Region IPC | [Selection and recording frame](docs/wiki/IPC.md#region-selection-and-recording-frame) | [Coordinate formats and capture guidance](docs/wiki/IPC.md#region-selection-and-recording-frame) |
+
+[Full demo config](resources/knit-desktop.kdl) — starts sample applications; copy the settings you need rather than replacing your config wholesale.
 
 ## License
 
 Based on [niri](https://github.com/niri-wm/niri) by Ivan Molodetskikh and contributors. Inspired by [window-sweaters](https://github.com/saragordic/window-sweaters). [GPL-3.0-or-later](LICENSE).
+
+Logo adapted from the [niri project artwork](docs/wiki/Name-and-Logo.md), with an animated glint overlay; licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).

@@ -1,5 +1,5 @@
 [Unit]
-Description=Shutdown running Niri Sweaters session
+Description=Shutdown running Niri Charm session
 DefaultDependencies=no
 StopWhenUnneeded=true
 

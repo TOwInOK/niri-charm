@@ -1,0 +1,7 @@
+type               = process
+command            = /bin/sh -c "exec niri-charm --session --config \"$${XDG_CONFIG_HOME:-$$HOME/.config}/niri-charm/config.kdl\""
+restart            = false
+working-dir        = $HOME
+ready-notification = pipevar:NOTIFY_FD
+logfile            = $HOME/.local/share/niri-charm/niri.log
+depends-on:        dbus

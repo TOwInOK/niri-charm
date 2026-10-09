@@ -1,0 +1,6 @@
+type           = internal
+restart        = false
+depends-on:    niri-charm
+waits-for.d:   $XDG_CONFIG_HOME/dinit.d/niri-charm.d/
+waits-for.d:   $HOME/.config/dinit.d/niri-charm.d/
+waits-for.d:   /etc/dinit.d/user/niri-charm.d/
