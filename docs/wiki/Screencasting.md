@@ -12,6 +12,16 @@ Alternatively, you can use tools that rely on the `ext-image-copy-capture` proto
 There are several features in niri designed for screencasting.
 Let's take a look!
 
+### Protocol clients
+
+With `ext-image-copy-capture`, each session may have only one frame object at a time.
+Clients must destroy the frame after `ready` or `failed`, or when cancelling it, before creating the next frame.
+This also applies to cursor capture.
+Creating another frame too early raises `duplicate_frame` and disconnects the client.
+
+The old frame's `destroy` and the next `create_frame` can be sent together; no extra roundtrip is required.
+This is specific to `ext-image-copy-capture` and does not change portal/PipeWire capture.
+
 ### Block out windows
 
 You can block out specific windows from screencasts, replacing them with solid black rectangles.

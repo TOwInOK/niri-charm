@@ -191,6 +191,12 @@ These links point to the fork's documentation, including its added settings and 
 
 [Full demo config](resources/knit-desktop.kdl) — starts sample applications; copy the settings you need rather than replacing your config wholesale.
 
+## Upstream talk
+
+[How to test a Wayland compositor?](https://youtu.be/w44fYK5z418?list=PLK4NE4dSsLlw) · *October 2026*
+
+Ivan Molodetskikh explains niri's property-based, snapshot and client-server tests. The first half overlaps with his RustCon talk; the second half is new. The talk is in Russian with English subtitles.
+
 ## License
 
 Based on [niri](https://github.com/niri-wm/niri) by Ivan Molodetskikh and contributors. Inspired by [window-sweaters](https://github.com/saragordic/window-sweaters). [GPL-3.0-or-later](LICENSE).
