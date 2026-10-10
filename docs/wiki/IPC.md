@@ -69,7 +69,7 @@ You can find all available requests and response types in the [niri-ipc sub-crat
 
 <sup>Since: next release</sup>
 
-`niri msg zoom` prints the [desktop zoom](./Accessibility.md#desktop-zoom) state of each output.
+`niri msg zoom` prints the [desktop zoom](./Configuration:-Zoom.md) state of each output.
 With `--json`, the response is a list of objects with the following fields:
 
 - `output`: the output name.

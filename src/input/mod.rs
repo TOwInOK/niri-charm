@@ -1041,7 +1041,9 @@ impl State {
                             .set_axes_hold(HoldButton::Tablet(button), true);
                         self.niri.queue_redraw_all();
                     }
-                    _ => warn!("ignoring screenshot-toggle-axes hold=true without a physical trigger"),
+                    _ => warn!(
+                        "ignoring screenshot-toggle-axes hold=true without a physical trigger"
+                    ),
                 }
             }
             Action::Screenshot {

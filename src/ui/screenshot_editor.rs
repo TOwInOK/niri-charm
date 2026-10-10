@@ -752,7 +752,8 @@ impl Canvas {
                         );
                         cr.fill()?;
                     } else {
-                        // Only submit segments that can affect the dirty area, including their round caps.
+                        // Only submit segments that can affect the dirty area, including their
+                        // round caps.
                         for pair in stroke.points.windows(2) {
                             if segment_bounds(pair[0], pair[1], stroke.width).overlaps(damage) {
                                 cr.move_to(f64::from(pair[0].x) + 0.5, f64::from(pair[0].y) + 0.5);

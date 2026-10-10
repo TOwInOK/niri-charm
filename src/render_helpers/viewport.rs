@@ -49,7 +49,11 @@ impl<E: Element> Element for ViewportRenderElement<E> {
         self.element.transform()
     }
 
-    fn damage_since(&self, scale: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
         self.element
             .damage_since(scale, commit)
             .into_iter()

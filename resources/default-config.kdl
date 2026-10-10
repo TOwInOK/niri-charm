@@ -320,7 +320,7 @@ animations {
 
 // Desktop zoom magnifies the rendered desktop without changing the output scale.
 // Find more information on the wiki:
-// https://niri-wm.github.io/niri/Configuration:-Miscellaneous
+// https://niri-wm.github.io/niri/Configuration:-Zoom
 // zoom {
 //     max-zoom 10.0
 //     increment-factor 1.2

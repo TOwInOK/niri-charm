@@ -1,62 +1,62 @@
 ### Overview
 
-The root `screenshot { ... }` block customizes the built-in interactive screenshot editor: its toolbar, tooltips, selection, brush, arrow, rectangle, blur, axis guides and magnifier. It does not affect the appearance of non-interactive `screenshot-screen` or `screenshot-window` captures.
+<sup>Since: 0.1.0</sup> Built-in area selection, clipboard copy and saving to disk.
 
-Place this block at the top level of `config.kdl`, alongside `binds`, not inside it. All sections and settings are optional; specify only what you want to change.
+<sup>Since: fork</sup> Annotation tools and configurable editor UI described below.
 
-The toolbar, selection frame, dimming, axis guides, brush cursor and magnifier are UI overlays and are not included in the exported image. Drawings, shapes and blur edits are included.
+The root `screenshot { ... }` block configures the interactive editor. It does not affect `screenshot-screen` or `screenshot-window` captures.
+
+Place it alongside `binds` in `config.kdl`. All settings are optional.
 
 The available tools are Select, Draw, Arrow, Rectangle and Blur. Text annotations are not implemented.
 
-### Visual guide
+<p>Press <code>Print</code> to select an area, then annotate or export it. Numbered circles label the toolbar controls; click images for full size.</p>
 
-<p>Open the editor with <code>Print</code>, select an area, then annotate it or export it. The captures below use demo content in a real Niri Charm session, with editor controls and configuration examples shown alongside the results. Numbered circles are documentation labels, not extra UI controls. Click any image for full size.</p>
+[Toolbar buttons](#toolbar-buttons) · [Color palette](#color-palette) · [Widths and magnifier](#adjusting-tools-and-the-magnifier) · [Toolbar placement](#toolbar-placement-examples) · [Margins and padding](#toolbar-spacing-and-padding) · [UI colors](#interface-color-examples) · [Tool colors](#independent-tool-colors) · [Custom palettes](#custom-color-palettes) · [Blur levels](#blur-strength-examples) · [Undo/redo](#undo-and-redo) · [Axes: Arrow, Draw, Rectangle](#drawing-with-axis-guides) · [Cursor](#including-the-captured-cursor) · [Export](#copy-save-and-cancel) · [Configuration reference](#default-configuration)
 
-[Toolbar buttons](#toolbar-buttons) · [Color palette](#color-palette) · [Widths and magnifier](#adjusting-tools-and-the-magnifier) · [Panel placement](#toolbar-placement-examples) · [Margins and padding](#toolbar-spacing-and-padding) · [UI colors](#interface-color-examples) · [Tool colors](#independent-tool-colors) · [Custom palettes](#custom-color-palettes) · [Blur levels](#blur-strength-examples) · [Undo/redo](#undo-and-redo) · [Axes: Arrow, Draw, Rectangle](#drawing-with-axis-guides) · [Cursor](#including-the-captured-cursor) · [Export](#copy-save-and-cancel) · [Configuration reference](#default-configuration)
+[![Screenshot editor with a crop, arrow, rectangle, freehand stroke, blurred text and magnifier](./img/screenshot-editor-overview.png)](./img/screenshot-editor-overview.png)
 
-[![The real screenshot editor with a crop, green arrow, orange rectangle, blue freehand underline, blurred demo text and a pixel magnifier](./img/screenshot-editor-overview.png)](./img/screenshot-editor-overview.png)
-
-The white frame is the crop. The arrow, rectangle, freehand line and blur are edits that will be exported. The toolbar, dimming, crop frame and magnifier are only editing aids.
+The white frame marks the crop.
 
 ### Toolbar buttons
 
-<p>The panel groups five tools, history controls, cursor and axes toggles, then Copy and Save. The numbers above the image match the table below. The small numbers inside the drawing-tool buttons are stroke widths in captured-image pixels.</p>
+<p>Numbers map the toolbar controls to the table below. Drawing-tool buttons also show stroke widths in captured-image pixels.</p>
 
 [![Screenshot toolbar numbered from 1 to 11: Select, Draw, Arrow, Rectangle, Blur, Undo, Redo, Cursor, Axes, Copy and Save](./img/screenshot-toolbar.png)](./img/screenshot-toolbar.png)
 
-| No. | Button | What it does | Bundled shortcut |
-| --- | --- | --- | --- |
-| 1 | **Select** | Drag to choose the crop. Hold `Space` while dragging to move the existing crop instead of drawing a new one. | `V`; hold `Space` to move |
-| 2 | **Draw** | Draw a freehand stroke, or click for a dot. Activate the selected button again to open its color palette. | `B` |
-| 3 | **Arrow** | Drag from the tail to the arrowhead. It has its own color, width and palette. | `A` |
-| 4 | **Rectangle** | Drag between opposite corners to draw an outline; it has no fill. It also has independent color, width and palette settings. | `D` |
-| 5 | **Blur** | Drag a rectangle to blur the frozen image beneath the drawings. The three segments below the icon show Low, Medium or High strength. Clicking this button selects Blur; it does not cycle the strength. | `R` |
-| 6 | **Undo** | Remove the last completed drawing or blur edit. During a gesture, discard the unfinished edit instead. Grey means there is nothing to undo. | `Ctrl+Z` |
-| 7 | **Redo** | Restore the last undone edit. Grey means there is nothing to redo. A new completed edit clears the redo history. | `Ctrl+Shift+Z` or `Ctrl+Y` |
-| 8 | **Cursor** | Include or exclude the pointer captured when the editor opened. An accent stripe below the icon means it is included; the icon itself stays the same. | `P` |
-| 9 | **Axes** | Toggle horizontal/vertical drawing constraints for Draw, Arrow and Rectangle. This is **not** the crop-move button. An accent stripe means the mode is enabled. | `X`; hold `Shift_L` temporarily |
-| 10 | **Copy** | Copy the current crop and edits to the clipboard as PNG, without creating a file. | `Ctrl+C` |
-| 11 | **Save** | Save the crop and edits to the configured file path and also copy them to the clipboard. Finish any active gesture first. | `Ctrl+S`; `Enter` when no control is keyboard-focused |
+| No. | Button        | What it does                                                                                                                                                                                            | Bundled shortcut                                      |
+| --- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| 1   | **Select**    | Drag to choose the crop. Hold `Space` while dragging to move the existing crop instead of drawing a new one.                                                                                            | `V`; hold `Space` to move                             |
+| 2   | **Draw**      | Draw a freehand stroke, or click for a dot. Activate the selected button again to open its color palette.                                                                                               | `B`                                                   |
+| 3 | **Arrow** | Drag from the tail to the arrowhead. | `A` |
+| 4 | **Rectangle** | Drag between opposite corners to draw an unfilled outline. | `D` |
+| 5   | **Blur**      | Drag a rectangle to blur the frozen image beneath the drawings. The three segments below the icon show Low, Medium or High strength. Clicking this button selects Blur; it does not cycle the strength. | `R`                                                   |
+| 6   | **Undo**      | Remove the last completed drawing or blur edit. During a gesture, discard the unfinished edit instead. Grey means there is nothing to undo.                                                             | `Ctrl+Z`                                              |
+| 7   | **Redo**      | Restore the last undone edit. Grey means there is nothing to redo. A new completed edit clears the redo history.                                                                                        | `Ctrl+Shift+Z` or `Ctrl+Y`                            |
+| 8   | **Cursor**    | Include or exclude the pointer captured when the editor opened. An accent stripe below the icon means it is included; the icon itself stays the same.                                                   | `P`                                                   |
+| 9   | **Axes**      | Toggle horizontal/vertical drawing constraints for Draw, Arrow and Rectangle. This is **not** the crop-move button. An accent stripe means the mode is enabled.                                         | `X`; hold `Shift_L` temporarily                       |
+| 10  | **Copy**      | Copy the current crop and edits to the clipboard as PNG, without creating a file.                                                                                                                       | `Ctrl+C`                                              |
+| 11  | **Save**      | Save the crop and edits to the configured file path and also copy them to the clipboard. Finish any active gesture first.                                                                               | `Ctrl+S`; `Enter` when no control is keyboard-focused |
 
-These are **configured bindings from the bundled default config**, not hidden hard-coded keys. Existing configs need the editor bindings; see [Key Bindings](./Configuration:-Key-Bindings.md#screenshot-screenshot-screen-screenshot-window). Editor-local bindings do not take over the same keys in applications when the editor is closed.
+Shortcuts come from the bundled config. Add the [editor bindings](./Configuration:-Key-Bindings.md#screenshot-screenshot-screen-screenshot-window) to existing configs; they apply only while the editor is open.
 
-The active tool's **icon** uses the accent color. The bottom stripe on Draw, Arrow and Rectangle shows that tool's **drawing color**, which can be different from the accent. Cursor and Axes use their stripe as an on/off indicator instead. Blur uses one, two or three filled segments.
+Active icons use the accent color. Draw, Arrow and Rectangle stripes show drawing colors; Cursor and Axes stripes indicate enabled state. Blur segments indicate strength.
 
 ### Color palette
 
-<p>The color menu belongs to the selected Draw, Arrow or Rectangle tool. It is a palette of configured swatches, not a separate text, fill or eyedropper tool. Each colored tool keeps its own color, width and palette.</p>
+<p>The palette sets the active Draw, Arrow or Rectangle color.</p>
 
-[![The Draw color palette with blue checked, a blue stripe on Draw, an independent width indicator, and the native hex-color and shortcut tooltip](./img/screenshot-palette.png)](./img/screenshot-palette.png)
+[![Draw palette with blue selected, its width indicator, and a hex-color and shortcut tooltip](./img/screenshot-palette.png)](./img/screenshot-palette.png)
 
-1. Select **Draw**, **Arrow** or **Rectangle**. Selecting a different tool does not open the menu.
-2. Click that selected tool again, or press `C`, to open its palette. There is no separate palette button in the main toolbar. Repeated-click opening depends on `open-palette-on-click`.
-3. Click a swatch, or use the configured `1`–`7` bindings while the palette is open. The order follows the configured palette: left to right, then the next row. A border and checkmark identify the active color.
-4. By default, choosing a color closes the menu. Set `close-palette-on-select false` to keep it open. Clicking outside the menu dismisses it without painting; start a new gesture to draw.
-5. Draw a new stroke to use the chosen color. Existing edits are not recolored. Switching tools preserves each tool's current color and width.
+1. Select **Draw**, **Arrow** or **Rectangle**. Selecting a different tool does not open its palette.
+2. Click the selected tool again, or press `C`, to open its palette. Repeated-click opening requires `open-palette-on-click`.
+3. Choose a swatch by clicking or using the configured `1`–`7` bindings, ordered left to right, then by row. A border and checkmark identify the selection.
+4. Choosing a color closes the palette unless `close-palette-on-select false` is set. Clicking outside dismisses it without painting; start a new gesture to draw.
+5. Draw a new stroke to use the selected color.
 
 Hovering a swatch or focusing it with the keyboard shows its hex color and configured shortcut. `Tab` / `Shift+Tab` cycle through enabled toolbar controls and then the open palette; `Enter` activates the focused control. `Escape` closes the palette first. Keyboard focus has an extra accent outline and does not by itself change the active tool.
 
-The palette accepts **one to seven opaque colors** per tool. To change the available swatches, edit that tool's `palette` in the config; see [Brush, arrow and rectangle](#brush-arrow-and-rectangle). The menu edits only the active colored tool, not every tool at once.
+Configure **one to seven opaque colors** per tool; see [Brush, arrow and rectangle](#brush-arrow-and-rectangle).
 
 ### Adjusting tools and the magnifier
 
@@ -67,18 +67,18 @@ The palette accepts **one to seven opaque colors** per tool. To change the avail
 - Over the **canvas**, adjust the pixel magnifier through `1×`, `2×`, `4×`, `8×`, `16×`, `32×`, up to the configured limit. It starts hidden at `1×` with the default settings and appears from `2×`.
 - Over Select, palette controls or other toolbar UI, the context action does not zoom the canvas.
 
-**Keyboard focus takes priority over hover.** Move the mouse to clear keyboard focus and return to pointer-based adjustment. This is magnifier zoom, not desktop zoom. The lens shows the frozen image plus edits, and it never appears in the export.
+**Keyboard focus takes priority over hover.** Mouse movement clears that focus and restores pointer-based adjustment. This controls the screenshot magnifier, not desktop zoom.
 
 ### Toolbar placement examples
 
-<p>The panel can sit at either screen edge with left, center or right alignment. These six real captures use the same screenshot and crop; only <code>position</code> and <code>align</code> inside <code>screenshot.toolbar</code> change. The palette and tooltips follow the panel and open toward the center of the screen.</p>
+<p>Use <code>position</code> to choose the top or bottom edge and <code>align</code> for left, center or right alignment.</p>
 
 <table>
   <tr>
     <td width="33%" valign="top">
       <a href="./img/screenshot-toolbar-top-left.png"><img src="./img/screenshot-toolbar-top-left.png" alt="Screenshot toolbar placed at the top left" width="100%"></a>
       <h4>Top left</h4>
-      <p><code>position "top"</code>, <code>align "left"</code>. The panel follows the top and left margins.</p>
+      <p><code>position "top"</code>, <code>align "left"</code>. Uses the top and left margins.</p>
     </td>
     <td width="33%" valign="top">
       <a href="./img/screenshot-toolbar-top-center.png"><img src="./img/screenshot-toolbar-top-center.png" alt="Screenshot toolbar centered at the top" width="100%"></a>
@@ -88,24 +88,24 @@ The palette accepts **one to seven opaque colors** per tool. To change the avail
     <td width="33%" valign="top">
       <a href="./img/screenshot-toolbar-top-right.png"><img src="./img/screenshot-toolbar-top-right.png" alt="Screenshot toolbar placed at the top right" width="100%"></a>
       <h4>Top right</h4>
-      <p><code>position "top"</code>, <code>align "right"</code>. The panel follows the top and right margins.</p>
+      <p><code>position "top"</code>, <code>align "right"</code>. Uses the top and right margins.</p>
     </td>
   </tr>
   <tr>
     <td width="33%" valign="top">
       <a href="./img/screenshot-toolbar-bottom-left.png"><img src="./img/screenshot-toolbar-bottom-left.png" alt="Screenshot toolbar placed at the bottom left" width="100%"></a>
       <h4>Bottom left</h4>
-      <p><code>position "bottom"</code>, <code>align "left"</code>. Menus open upward, away from the bottom edge.</p>
+      <p><code>position "bottom"</code>, <code>align "left"</code>. The palette and tooltips open upward.</p>
     </td>
     <td width="33%" valign="top">
       <a href="./img/screenshot-toolbar-bottom-center.png"><img src="./img/screenshot-toolbar-bottom-center.png" alt="Screenshot toolbar centered at the bottom" width="100%"></a>
       <h4>Bottom center</h4>
-      <p><code>position "bottom"</code>, <code>align "center"</code>. Center the panel between the horizontal margins.</p>
+      <p><code>position "bottom"</code>, <code>align "center"</code>. Centers the toolbar between the left and right margins.</p>
     </td>
     <td width="33%" valign="top">
       <a href="./img/screenshot-toolbar-bottom-right.png"><img src="./img/screenshot-toolbar-bottom-right.png" alt="Screenshot toolbar placed at the bottom right" width="100%"></a>
       <h4>Bottom right</h4>
-      <p><code>position "bottom"</code>, <code>align "right"</code>. The panel follows the bottom and right margins.</p>
+      <p><code>position "bottom"</code>, <code>align "right"</code>. Uses the bottom and right margins.</p>
     </td>
   </tr>
 </table>
@@ -125,19 +125,19 @@ Merge this into your existing `screenshot` block. Margins, sizes, colors and opa
 
 ### Toolbar spacing and padding
 
-<p><code>margin</code> controls the distance from the output edges, not the space inside the panel. These crops keep top-left placement and the same button/icon sizes; only the margins change. Values are logical pixels, so the 2× output used here doubles their visible pixel distance.</p>
+<p><code>margin</code> positions the toolbar relative to output edges, not the space between buttons. Values are logical pixels; these examples use 2× output scaling.</p>
 
 <table>
   <tr>
     <td width="33%" valign="top">
       <a href="./img/screenshot-toolbar-margin-8.png"><img src="./img/screenshot-toolbar-margin-8.png" alt="Top-left screenshot toolbar with all margins set to 8 logical pixels" width="100%"></a>
       <h4>Small outer margins</h4>
-      <p>All four margins are <code>8</code>, the default. The panel stays close to the top-left output corner.</p>
+      <p>All margins are <code>8</code>, the default, keeping the toolbar near the output edges.</p>
     </td>
     <td width="33%" valign="top">
       <a href="./img/screenshot-toolbar-margin-40.png"><img src="./img/screenshot-toolbar-margin-40.png" alt="The same toolbar moved inward with all margins set to 40 logical pixels" width="100%"></a>
       <h4>More outer space</h4>
-      <p>All four margins are <code>40</code>. The whole panel moves inward; its buttons and internal spacing do not grow.</p>
+      <p>All margins are <code>40</code>. The toolbar moves inward without enlarging buttons or internal spacing.</p>
     </td>
     <td width="33%" valign="top">
       <a href="./img/screenshot-toolbar-margin-asymmetric.png"><img src="./img/screenshot-toolbar-margin-asymmetric.png" alt="Screenshot toolbar with top margin 24 and left margin 96 logical pixels" width="100%"></a>
@@ -163,19 +163,19 @@ There is **no configurable `padding` or group-gap setting**. Inner edge padding 
 
 ### Interface color examples
 
-<p>UI colors are separate from drawing colors. These captures keep the same crop, red annotations and 8× magnifier while reloading the interface theme. The toolbar, selection frame, outside dimming and magnifier change; the existing drawings do not.</p>
+<p>Changing the toolbar, selection or magnifier theme does not recolor existing annotations.</p>
 
 <table>
   <tr>
     <td width="50%" valign="top">
       <a href="./img/screenshot-theme-dark.png"><img src="./img/screenshot-theme-dark.png" alt="Default dark screenshot editor with pale blue accent, white crop and magnifier borders, and red annotations" width="100%"></a>
       <h4>Default dark UI</h4>
-      <p>A dark panel, pale-blue active icon, white crop and lens borders, and black dimming. Red remains the drawing color.</p>
+      <p>Dark toolbar, pale-blue accent, white crop and lens borders, and black dimming.</p>
     </td>
     <td width="50%" valign="top">
       <a href="./img/screenshot-theme-light.png"><img src="./img/screenshot-theme-light.png" alt="Light violet screenshot toolbar with dark icons, violet selection and magnifier colors, and unchanged red annotations" width="100%"></a>
       <h4>Light violet UI</h4>
-      <p>A light panel with dark icons, violet accent, crop frame, dimming and magnifier grid. None of this recolors the red edits.</p>
+      <p>Light toolbar, dark icons, and violet accent, crop border, dimming and magnifier grid.</p>
     </td>
   </tr>
 </table>
@@ -210,24 +210,24 @@ The palette and tooltips share the toolbar theme. `accent-color` highlights an a
 
 ### Independent tool colors
 
-<p>Draw uses the <code>brush</code> configuration block; Arrow and Rectangle use their own blocks. Here Draw is blue, Arrow is green and Rectangle is orange, all at width 8. Each capture opens a different tool's palette: its checkmark and bottom stripe show that tool's color while the other edits keep theirs.</p>
+<p><code>brush</code>, <code>arrow</code> and <code>rectangle</code> configure their respective tools. These examples use width 8 with different colors.</p>
 
 <table>
   <tr>
     <td width="33%" valign="top">
       <a href="./img/screenshot-tool-colors-draw.png"><img src="./img/screenshot-tool-colors-draw.png" alt="Draw palette with blue checked, blue underline, green arrow and orange rectangle" width="100%"></a>
       <h4>Draw: blue</h4>
-      <p><code>brush.color "#0080ff"</code> sets the initial freehand color. The blue checkmark belongs only to Draw.</p>
+      <p>Initial Draw color: <code>brush.color "#0080ff"</code>.</p>
     </td>
     <td width="33%" valign="top">
       <a href="./img/screenshot-tool-colors-arrow.png"><img src="./img/screenshot-tool-colors-arrow.png" alt="Arrow palette with green checked while the underline stays blue and rectangle stays orange" width="100%"></a>
       <h4>Arrow: green</h4>
-      <p><code>arrow.color "#00c040"</code> is independent of the brush. Changing tools preserves their separate colors.</p>
+      <p>Initial Arrow color: <code>arrow.color "#00c040"</code>.</p>
     </td>
     <td width="33%" valign="top">
       <a href="./img/screenshot-tool-colors-rectangle.png"><img src="./img/screenshot-tool-colors-rectangle.png" alt="Rectangle palette with orange checked, independent of the blue Draw and green Arrow colors" width="100%"></a>
       <h4>Rectangle: orange</h4>
-      <p><code>rectangle.color "#ff8000"</code> colors the outline, not a fill. Its palette does not edit Draw or Arrow.</p>
+      <p>Initial Rectangle outline color: <code>rectangle.color "#ff8000"</code>.</p>
     </td>
   </tr>
 </table>
@@ -249,11 +249,11 @@ screenshot {
 }
 ```
 
-After the config reload completes, open a **new editor session** to use these initial colors and widths. An already-open editor keeps its current tool values. For an immediate change, use that tool's palette; only new strokes use the selected color. These screenshots keep the seven default swatches per tool. To replace those choices, see [Custom color palettes](#custom-color-palettes) below. Tool colors must be opaque; see [Brush, arrow and rectangle](#brush-arrow-and-rectangle).
+Initial colors and widths take effect on the next editor opening. Use tool controls to change an open session; existing edits stay unchanged. Configure swatches separately under [Custom color palettes](#custom-color-palettes).
 
 ### Custom color palettes
 
-<p><code>palette</code> replaces a tool's default color pool: it controls both the available swatches and their order, not just the selected color. These close-ups show three different lists from the configuration below. Select a tool, then activate it again or press <code>C</code> to open its own palette.</p>
+<p><code>palette</code> sets each tool's available colors and their display order.</p>
 
 <table>
   <tr>
@@ -301,7 +301,7 @@ screenshot {
 
 ### Blur strength examples
 
-<p>Low, Medium and High use the same original demo text and the same rectangle below. Each blur was applied separately, not stacked over the previous level. The real button and tooltip show the selected strength above each result.</p>
+<p>Compare Low, Medium and High on the same region. Each result uses one blur operation, not stacked layers.</p>
 
 <table>
   <tr>
@@ -331,13 +331,13 @@ Select Blur, hover its button, then scroll or use the configured `Minus` / `Equa
 
 <p>Each completed drawing or blur gesture is one history entry. Here Undo removes the blur and Redo restores exactly the same edit; the toolbar insets show which history buttons are available.</p>
 
-[![Blur applied, removed with Undo, then restored with Redo, with the real Undo and Redo button states](./img/screenshot-history.png)](./img/screenshot-history.png)
+[![Blur removed with Undo and restored with Redo, with the corresponding button states](./img/screenshot-history.png)](./img/screenshot-history.png)
 
 Changing the tool, its color/width or the crop does not create a history entry. A new completed edit clears the redo stack. History lasts only until the editor closes. During a gesture, Undo discards the unfinished edit instead of committing it.
 
 ### Drawing with axis guides
 
-<p>Axes constrain Draw, Arrow and Rectangle to horizontal or vertical movement. In this mid-drag capture, the arrow remains horizontal even though the pointer has moved below it. The dashed guides and the free pointer are editing aids, not exported marks.</p>
+<p>Axes constrain Draw, Arrow and Rectangle to horizontal or vertical movement. Here the arrow stays horizontal while the pointer moves below it.</p>
 
 [![An arrow constrained horizontally by axis guides while the pointer remains below the drawn endpoint](./img/screenshot-axes.png)](./img/screenshot-axes.png)
 
@@ -362,7 +362,7 @@ Click button **9** or press `X` to toggle the mode. Holding `Shift_L` enables it
   </tr>
 </table>
 
-Use `X` for a persistent constraint or hold `Shift_L` temporarily with the bundled bindings. Guides and the free crosshair do not become part of the drawing.
+Use `X` for a persistent constraint or hold `Shift_L` temporarily with the bundled bindings.
 
 ### Axes and Rectangle
 
@@ -394,15 +394,15 @@ For this sequence, start with the Axes toggle off. Hold `Shift_L`, press the mou
 
 <p>Button 8 controls the pointer that was frozen with the desktop when the editor opened, not the live pointer you use to operate the editor. The accent stripe under the cursor icon indicates inclusion; the icon shape stays the same in both states.</p>
 
-[![The same frozen image with its captured pointer included and excluded, plus the actual cursor button state](./img/screenshot-pointer.png)](./img/screenshot-pointer.png)
+[![Captured pointer included and excluded, with the corresponding cursor button state](./img/screenshot-pointer.png)](./img/screenshot-pointer.png)
 
 Click the button or press `P` to toggle it. The setting affects both clipboard and file export. You can choose the initial state on the opening action, for example `screenshot show-pointer=false`.
 
 ### Copy, save and cancel
 
-<p>Copy and Save both export the selected crop with its completed edits and close the editor on success. This is the actual saved image from the overview: the toolbar, magnifier, crop border and other editor overlays are not part of it.</p>
+<p>Exports include the selected crop and completed edits, but no editor overlays. Copy and Save close the editor on success.</p>
 
-[![The real exported crop with the arrow, rectangle, freehand line and blur, without the screenshot editor controls or magnifier](./img/screenshot-export.png)](./img/screenshot-export.png)
+[![Exported crop with an arrow, rectangle, freehand stroke and blur](./img/screenshot-export.png)](./img/screenshot-export.png)
 
 - **Copy / `Ctrl+C`:** PNG clipboard only; no file is created.
 - **Save / `Ctrl+S`:** save to `screenshot-path` and also copy to the clipboard. The file can be PNG, WebP or AVIF; clipboard images remain PNG.
@@ -514,10 +514,10 @@ Brush and palette colors must be fully opaque. Use `#RRGGBB` or an alpha of `ff`
 | `position`            | `"top"`       | Screen edge: `"top"` or `"bottom"`.                                        |
 | `align`               | `"center"`    | Horizontal alignment: `"left"`, `"center"` or `"right"`.                   |
 | `margin`              | All sides `8` | Independent non-negative `top`, `right`, `bottom`, `left` properties.      |
-| `button-size`         | `40`          | Positive button size. Panel height is calculated automatically.            |
+| `button-size` | `40` | Positive button size. Toolbar height is calculated automatically. |
 | `icon-size`           | `24`          | Positive SVG icon size, no larger than `button-size`.                      |
-| `background-color`    | `"#12121a"`   | Panel background.                                                          |
-| `border-color`        | `"#ffffff29"` | Panel outline.                                                             |
+| `background-color` | `"#12121a"` | Toolbar background. |
+| `border-color` | `"#ffffff29"` | Toolbar outline. |
 | `border-width`        | `1`           | Non-negative outline width; `0` removes it.                                |
 | `accent-color`        | `"#80c7ff"`   | Active-control accent.                                                     |
 | `icon-color`          | `"#ffffffeb"` | Normal icon color.                                                         |
@@ -553,7 +553,7 @@ Shortcut labels reflect the configured bindings rather than a separate set of to
 | `dim-opacity`        | `0.5`       | Dimming opacity multiplier, from `0` to `1`; `0` disables dimming.       |
 | `remember-selection` | `true`      | Restore the previous selection on the next editor opening when possible. |
 
-Dimming affects only the frozen background outside the selected region, including inactive outputs. It does not dim your drawing or become part of the saved image. Selection is limited to one output.
+Dimming affects only the frozen background outside the crop, including inactive outputs; drawings stay at full brightness. Selection is limited to one output.
 
 ### Brush, arrow and rectangle
 
@@ -567,9 +567,11 @@ Dimming affects only the frozen background outside the selected region, includin
 
 Palette numbering starts at 1: `screenshot-palette-color 1` selects the first configured swatch. Repeated RGB values remain separate swatches for pointer and keyboard navigation. The initial `color` need not occur in the palette. Colors and widths chosen in the editor affect new strokes, not existing drawings.
 
-`brush`, `arrow` and `rectangle` accept the same settings above, but store independent colors, widths and palettes; they do not inherit custom brush settings. Each button has its own bottom color stripe and a width number in the top-right corner. The brush cursor outlines its actual captured-pixel diameter. Selecting a different tool never opens its palette; activating the selected tool again toggles its palette only when `open-palette-on-click` is enabled. `screenshot-tool` never opens it. The shared palette edits only the selected colored tool.
+`brush`, `arrow` and `rectangle` use the same settings but keep separate colors, widths and palettes; custom brush settings are not inherited. The brush cursor shows its diameter in captured pixels.
 
-Drag an arrow from tail to head; its head scales with the captured width. Drag a rectangle between opposite corners; it has no fill. Each gesture previews live and becomes one undo/redo operation on mouse release. Escape cancels it. Changes to tool parameters never recolor or resize completed edits.
+Selecting another tool does not open its palette. Reactivating the selected tool toggles it when `open-palette-on-click` is enabled; `screenshot-tool` never opens it.
+
+Drag an arrow from tail to head; its head scales with stroke width. Drag a rectangle between opposite corners; it has no fill. Each gesture previews live and becomes one undo/redo operation on mouse release. Escape cancels it.
 
 ### Blur
 
@@ -619,7 +621,21 @@ binds {
 
 ### Context-sensitive adjustment
 
-`screenshot-context` first uses the control focused by `screenshot-focus-next` or `screenshot-focus-previous`. Without keyboard focus it uses pointer hit-testing. A focused or hovered Draw, Arrow or Rectangle button changes its own stroke width; Blur changes its strength. Neither focus nor this command selects the tool. Select, palette controls and other UI absorb the command without zooming; with no focus, toolbar padding also blocks it and the canvas changes magnifier zoom. With neither focus nor a pointer, it is a no-op. Mouse movement clears keyboard focus and restores pointer-based routing. Each tool remembers its value independently. A bare integer sets an absolute value from `1` to `128`, clamped to the target: widths `1`–`128`, Blur `1`–`3`, magnifier rounded down to a power of two within `max-zoom`. Signed strings such as `"+1"` or `"-1"` adjust without wrapping. Tool parameters remain frozen during a gesture, while canvas zoom remains available. Explicit `screenshot-magnifier-zoom` ignores both focus and hover.
+`screenshot-context` uses keyboard focus from `screenshot-focus-next` / `screenshot-focus-previous`; without focus, it uses the pointer. Mouse movement clears keyboard focus.
+
+| Target | Adjusted value |
+| --- | --- |
+| Draw, Arrow or Rectangle | That tool's stroke width: `1`–`128`. |
+| Blur | Strength: `1`–`3` (Low, Medium, High). |
+| Canvas, with no keyboard focus | Magnifier zoom: `1×`–`max-zoom`, in powers of two. |
+| Select, palette controls, other UI or toolbar padding | No change. |
+
+The command does not select a tool, and each tool keeps its own value. With neither focus nor a pointer, it does nothing.
+
+- A bare integer (`1`–`128`) sets an absolute value, clamped to the target range; magnifier values round down to a power of two.
+- Signed strings such as `"+1"` and `"-1"` adjust without wrapping.
+- During a gesture, tool parameters stay fixed, but canvas zoom remains available.
+- Explicit `screenshot-magnifier-zoom` ignores focus and hover.
 
 Configured `TouchpadScroll*` bindings accumulate continuous movement in 10-pixel steps, independently per axis and separately from wheel ticks. Unbound scroll input remains confined to the editor.
 
@@ -642,7 +658,7 @@ Configured `TouchpadScroll*` bindings accumulate continuous movement in 10-pixel
 
 `initial-zoom` and `show-from` must not exceed `max-zoom`. `grid-from` may exceed it; in that case the grid remains hidden until the maximum is raised. The grid also requires the lens to be visible.
 
-The border is drawn inside the lens without changing its outer diameter. Its default is a single white outline, replacing the former black/white contour. A transparent border reveals the image beneath it. `grid-color` blends over the image; its default approximately preserves the previous grid darkening. It does not change `cross-highlight-color` or the central pixel marker. These colors and the border width update on configuration reload.
+The border is drawn inside the lens without changing its diameter; transparency reveals the image underneath. `grid-color` blends over the image independently of `cross-highlight-color` and the central pixel marker. These colors and the border width update on reload.
 
 At the default `initial-zoom 1`, the lens starts hidden. To show it immediately, use `initial-zoom 2` with `show-from 2`. Zoom changes in discrete steps, not continuously. The lens shows the frozen image plus edits, without the toolbar or selection overlay.
 
@@ -713,24 +729,24 @@ A cancelled touch sequence discards its unfinished drawing, restores an interrup
 
 The repository example `resources/knit-desktop.kdl` exposes all editor actions and independent tool settings. It is a demo, not the default configuration above: it starts Zed, Obsidian and two Ghostty windows. Run it from an existing Wayland session with `./target/debug/niri --config resources/knit-desktop.kdl`.
 
-| Demo binding | Action |
-| --- | --- |
-| `Alt+U` / `Print`; `Alt+Shift+U` | Open Select; open Draw without the captured pointer |
-| `V`, `B`, `A`, `D`, `R` | Select, Draw, Arrow, Rectangle, Blur |
-| `C`; `1`–`7` | Toggle palette; select a swatch |
-| `Tab` / `Shift+Tab`; `-` / `=` or wheel | Move focus; adjust the focused control, otherwise pointer context |
-| `Ctrl+wheel`; `F11` / `F12` | Explicit lens steps; absolute 1× / 32× |
-| `X`; hold left `Shift` or right mouse | Toggle axes; temporarily enable axes |
-| Arrows; `Ctrl+arrows`; `Shift+arrows`; hold `Space` and drag | Move crop 1 px; move 20 px; resize 1 px; move with pointer |
-| `Ctrl+Z`; `Ctrl+Shift+Z` / `Ctrl+Y` | Undo; redo |
-| `P`; `F3` / `F4` | Toggle captured pointer; explicitly show / hide |
-| `F1` / `F2`; `F5` / `F6` | Open / close palette; enable / disable axes |
-| `F7`, `F8`, `F9` | Set brush orange, arrow green, rectangle blue without selecting the tool |
-| `F10` | Set context to 8: width 8, Blur clamped to 3, or canvas zoom 8× |
-| `Enter`; `Escape`; `Ctrl+Escape` | Confirm focus or save; cancel one step; discard immediately |
-| `Ctrl+C` / `Ctrl+S` | Copy only / save and copy |
-| `Ctrl+Alt+P` / `Ctrl+Alt+W` / `Ctrl+Alt+A` | Export PNG / WebP quality 85 / AVIF quality 90 |
-| `Ctrl+Print` / `Alt+Print` | Capture screen / window without the editor |
+| Demo binding                                                 | Action                                                                   |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `Alt+U` / `Print`; `Alt+Shift+U`                             | Open Select; open Draw without the captured pointer                      |
+| `V`, `B`, `A`, `D`, `R`                                      | Select, Draw, Arrow, Rectangle, Blur                                     |
+| `C`; `1`–`7`                                                 | Toggle palette; select a swatch                                          |
+| `Tab` / `Shift+Tab`; `-` / `=` or wheel                      | Move focus; adjust the focused control, otherwise pointer context        |
+| `Ctrl+wheel`; `F11` / `F12`                                  | Explicit lens steps; absolute 1× / 32×                                   |
+| `X`; hold left `Shift` or right mouse                        | Toggle axes; temporarily enable axes                                     |
+| Arrows; `Ctrl+arrows`; `Shift+arrows`; hold `Space` and drag | Move crop 1 px; move 20 px; resize 1 px; move with pointer               |
+| `Ctrl+Z`; `Ctrl+Shift+Z` / `Ctrl+Y`                          | Undo; redo                                                               |
+| `P`; `F3` / `F4`                                             | Toggle captured pointer; explicitly show / hide                          |
+| `F1` / `F2`; `F5` / `F6`                                     | Open / close palette; enable / disable axes                              |
+| `F7`, `F8`, `F9`                                             | Set brush orange, arrow green, rectangle blue without selecting the tool |
+| `F10`                                                        | Set context to 8: width 8, Blur clamped to 3, or canvas zoom 8×          |
+| `Enter`; `Escape`; `Ctrl+Escape`                             | Confirm focus or save; cancel one step; discard immediately              |
+| `Ctrl+C` / `Ctrl+S`                                          | Copy only / save and copy                                                |
+| `Ctrl+Alt+P` / `Ctrl+Alt+W` / `Ctrl+Alt+A`                   | Export PNG / WebP quality 85 / AVIF quality 90                           |
+| `Ctrl+Print` / `Alt+Print`                                   | Capture screen / window without the editor                               |
 
 The demo starts with a red 4 px brush, green 8 px arrow and blue 6 px rectangle. The arrow palette stays open after color selection; repeated activation of Rectangle does not open its palette (use `C` or `F1`). These differences are intentional checks of independent settings. Existing annotations retain their original color and width.
 

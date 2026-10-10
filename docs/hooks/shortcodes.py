@@ -36,8 +36,8 @@ def on_page_markdown(
     )
 
 def _badge_for_version(preposition: str, version: str):
-    if version == "next release":
-        # we might fail to make real links to release notes on other cases too, but for now this is the one i've found
+    if version in ("next release", "fork"):
+        # Availability markers do not name tagged releases.
         return f"<span class=\"badge\">{preposition}: {version}</span>"
     else:
         path = f"https://github.com/niri-wm/niri/releases/tag/v{version}"

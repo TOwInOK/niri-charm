@@ -2,6 +2,7 @@
 mod shapes;
 
 use niri_config::Action;
+use niri_ipc::{ScreenshotColor as Color, ScreenshotTool as Tool, ScreenshotValueChange};
 use smithay::output::Output;
 use smithay::utils::{Physical, Point, Rectangle, Size};
 
@@ -9,7 +10,6 @@ use super::fixture::Fixture;
 use super::knit::{open_window, render_output_rgba};
 use crate::ui::screenshot_editor::{self, Control, Editor, EditorOutcome};
 use crate::ui::screenshot_ui::ScreenshotUi;
-use niri_ipc::{ScreenshotColor as Color, ScreenshotTool as Tool, ScreenshotValueChange};
 
 /// Minimal config for deterministic rendering: no animations, startup overlay,
 /// gaps, or focus ring.
@@ -943,8 +943,9 @@ fn screenshot_editor_palette_swatches_require_open_popup_and_dismiss_cleanly() {
 
 #[test]
 fn screenshot_editor_scroll_uses_source_units_and_accumulates() {
-    use super::test_input_backend::{TestInputBackend, TestPointerAxisEvent};
     use smithay::backend::input::{Axis, AxisSource, InputEvent};
+
+    use super::test_input_backend::{TestInputBackend, TestPointerAxisEvent};
 
     let mut f = set_up(&format!(
         r#"{CONFIG}
@@ -1553,8 +1554,9 @@ fn screenshot_selection_touch_release_order_preserves_crop() {
 
 #[test]
 fn screenshot_editor_touch_cancel_discards_stroke_and_allows_reused_slot() {
-    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
     use smithay::backend::input::InputEvent;
+
+    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
 
     let mut f = set_up(CONFIG);
     let output = f.niri_output(1);
@@ -1626,8 +1628,9 @@ fn screenshot_editor_touch_cancel_discards_stroke_and_allows_reused_slot() {
 
 #[test]
 fn screenshot_editor_touch_cancel_restores_crop_and_preserves_mouse_gesture() {
-    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
     use smithay::backend::input::InputEvent;
+
+    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
 
     let mut f = set_up(CONFIG);
     let output = f.niri_output(1);
@@ -1684,8 +1687,9 @@ fn screenshot_editor_touch_cancel_restores_crop_and_preserves_mouse_gesture() {
 
 #[test]
 fn screenshot_editor_closed_command_preserves_overview_touch_grab() {
-    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
     use smithay::backend::input::InputEvent;
+
+    use super::test_input_backend::{TestInputBackend, TestTouchEvent};
 
     let mut f = set_up(CONFIG);
     let touch = f.niri().seat.add_touch();
@@ -1745,8 +1749,9 @@ fn screenshot_editor_tooltip_is_visible_on_translucent_toolbar() {
 
 #[test]
 fn screenshot_editor_duplicate_palette_colors_remain_keyboard_accessible() {
-    use super::test_input_backend::{TestInputBackend, TestKeyboardKeyEvent};
     use smithay::backend::input::{InputEvent, InputTime, KeyState};
+
+    use super::test_input_backend::{TestInputBackend, TestKeyboardKeyEvent};
 
     let mut f = set_up(&format!(
         r##"{CONFIG}

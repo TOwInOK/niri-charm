@@ -603,9 +603,7 @@ impl From<niri_ipc::Action> for Action {
                 Self::ScreenshotSetPointer { show_pointer }
             }
             niri_ipc::Action::ScreenshotToggleAxes {} => Self::ScreenshotToggleAxes(false),
-            niri_ipc::Action::ScreenshotSetAxes { enabled } => {
-                Self::ScreenshotSetAxes { enabled }
-            }
+            niri_ipc::Action::ScreenshotSetAxes { enabled } => Self::ScreenshotSetAxes { enabled },
             niri_ipc::Action::ScreenshotMoveSelection { x, y } => {
                 Self::ScreenshotMoveSelection { x, y }
             }
@@ -1281,8 +1279,7 @@ fn decode_screenshot_action_inner<S: knuffel::traits::ErrorSpan>(
             // The pointer context is not known at parse time, so absolute values accept the
             // full stroke-width range; each target clamps to its own range at runtime.
             if let ScreenshotValueChange::Set(change) = change {
-                if !(MIN_SCREENSHOT_BRUSH_WIDTH..=MAX_SCREENSHOT_BRUSH_WIDTH).contains(&change)
-                {
+                if !(MIN_SCREENSHOT_BRUSH_WIDTH..=MAX_SCREENSHOT_BRUSH_WIDTH).contains(&change) {
                     ctx.emit_error(DecodeError::conversion(
                         &node.arguments[0].literal,
                         format!(

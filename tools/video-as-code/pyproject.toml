@@ -1,0 +1,36 @@
+[project]
+name = "niri-video"
+version = "0.1.0"
+description = "Reproducible niri feature videos from typed Python scenarios"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.40.2",
+    "ruff>=0.16.10",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "D"]
+ignore = ["D105", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.basedpyright]
+include = ["src", "scenarios", "tests"]
+exclude = [".venv", "output"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+pythonPlatform = "Linux"
+venvPath = "."
+venv = ".venv"

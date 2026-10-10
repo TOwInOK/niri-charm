@@ -182,20 +182,22 @@ This does **not** start recording. Clear the frame when finished with `niri-char
 
 These links point to the fork's documentation, including its added settings and actions:
 
-| Feature | Guide | Reference |
-| --- | --- | --- |
-| Knitted borders | [Sizes, patterns and palettes](docs/wiki/Knitted-Border-Tuning.md) | [All knit options](docs/wiki/Configuration:-Layout.md#procedural-knit-border) |
-| Desktop zoom | [Controls and behaviour](docs/wiki/Accessibility.md#desktop-zoom) | [Settings](docs/wiki/Configuration:-Miscellaneous.md#zoom-1) · [Actions](docs/wiki/Configuration:-Key-Bindings.md#zoom) |
-| Screenshot editor | [Tools and appearance](docs/wiki/Configuration:-Screenshot.md) | [Bindings and export](docs/wiki/Configuration:-Screenshot.md#opening-bindings-and-export) |
-| Region IPC | [Selection and recording frame](docs/wiki/IPC.md#region-selection-and-recording-frame) | [Coordinate formats and capture guidance](docs/wiki/IPC.md#region-selection-and-recording-frame) |
+| Feature           | Guide                                                                                  | Reference                                                                                                               |
+| ----------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Knitted borders   | [Sizes, patterns and palettes](docs/wiki/Knitted-Border-Tuning.md)                     | [All knit options](docs/wiki/Configuration:-Layout.md#procedural-knit-border)                                           |
+| Desktop zoom      | [Controls and behaviour](docs/wiki/Accessibility.md#desktop-zoom)                      | [Settings](docs/wiki/Configuration:-Miscellaneous.md#zoom-1) · [Actions](docs/wiki/Configuration:-Key-Bindings.md#zoom) |
+| Screenshot editor | [Tools and appearance](docs/wiki/Configuration:-Screenshot.md)                         | [Bindings and export](docs/wiki/Configuration:-Screenshot.md#opening-bindings-and-export)                               |
+| Region IPC        | [Selection and recording frame](docs/wiki/IPC.md#region-selection-and-recording-frame) | [Coordinate formats and capture guidance](docs/wiki/IPC.md#region-selection-and-recording-frame)                        |
 
 [Full demo config](resources/knit-desktop.kdl) — starts sample applications; copy the settings you need rather than replacing your config wholesale.
 
 ## Upstream talk
 
-[How to test a Wayland compositor?](https://youtu.be/w44fYK5z418?list=PLK4NE4dSsLlw) · *October 2026*
+[How to test a Wayland compositor?](https://youtu.be/w44fYK5z418?list=PLK4NE4dSsLlw) · _October 2026_
 
 Ivan Molodetskikh explains niri's property-based, snapshot and client-server tests. The first half overlaps with his RustCon talk; the second half is new. The talk is in Russian with English subtitles.
+
+_note_: btw good to know.
 
 ## License
 

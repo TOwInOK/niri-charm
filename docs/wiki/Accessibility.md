@@ -44,51 +44,16 @@ If you're shipping niri and would like to make it work better for screen readers
 
 <sup>Since: next release</sup>
 
-Niri has a built-in desktop zoom that magnifies the rendered desktop without changing the output scale.
-Clients are not asked to re-render at a higher scale, so high or fractional zoom levels may look softer.
-To see individual texture pixels instead, set [`sampling`](./Configuration:-Miscellaneous.md#sampling) to `"nearest"`, or use `"auto" threshold=4.0` to switch at 4×.
+Niri has a built-in desktop zoom that magnifies the rendered desktop without changing the output scale. Applications keep their buffer resolution; for permanent UI sizing, use output scaling instead.
 
-Desktop zoom is controlled through [bind actions](./Configuration:-Key-Bindings.md#zoom), for example:
+See [Zoom configuration](./Configuration:-Zoom.md) for animated examples, a ready-to-use binding block and the complete settings reference.
 
-```kdl
-binds {
-    Mod+Z { zoom 2.0; }
-    Mod+X { zoom 2.0 hold=true; }
-}
-```
+- Toggle a preset, change zoom incrementally, or hold a key for temporary magnification that restores the previous view on release.
+- Let the viewport follow the pointer outside a configurable deadzone, or lock it in place.
+- Opt in to touchpad pinch gestures; by default, applications keep their pinch gestures.
+- Choose smooth filtering or visible texture pixels, independently of the application's own rendering.
+- Each output keeps its own view. The lock screen stays unzoomed, while opening Overview ends the zoom session.
 
-Each output keeps its own zoom state.
-Zoom actions apply to the output under the pointer, or to the focused output when the pointer is not on any output.
-
-While zoomed, the viewport follows the pointer.
-The [`deadzone-size` setting](./Configuration:-Miscellaneous.md#deadzone-size) defines a centered area of the output in which the pointer can move without moving the zoomed viewport.
-Once the pointer leaves the deadzone, the viewport starts following it and keeps moving—even if the pointer itself stops—until the pointer is visually back at the deadzone edge or the viewport reaches the output bounds.
-The follow speed grows with the pointer's distance outside the deadzone, between [`follow-min-speed` and `follow-max-speed`](./Configuration:-Miscellaneous.md#follow-min-speed).
-
-Zooming in keeps the point under the pointer visually anchored.
-If the pointer is already outside the deadzone, the viewport starts following it during the zoom animation itself, so zooming and following read as one continuous movement.
-Zooming back out to 1× returns cleanly to the normal view.
-
-The `zoom-lock` action stops pointer-driven viewport following: while locked, moving the pointer does not pan the view, and the pointer stays confined to the visible area.
-`zoom-in` and `zoom-out` still zoom around the pointer while locked: each command captures its position, and moving the pointer afterwards does not move that anchor. Absolute level changes and locked restoration remain centered on the viewport.
-
-`zoom <LEVEL> lock=true` enters this locked state directly: the press zooms around the pointer and locks the viewport immediately, so the point under the pointer stays visually anchored during the zoom-in.
-
-`zoom <LEVEL> hold=true` is a momentary zoom: pressing the trigger remembers the current view and temporarily zooms in, normal zoom interactions keep working while it is held, and releasing the trigger restores the previous view.
-Adding `lock=true` locks the viewport for the duration of the hold—the press zooms around the pointer and locks immediately—and restores the previous lock state on release.
-
-You can also zoom with a touchpad pinch gesture by setting [`pinch-fingers`](./Configuration:-Miscellaneous.md#pinch-fingers) in the `zoom` config section.
-This is an opt-in: a matching pinch gesture is claimed by the compositor when it begins, so applications will no longer receive pinch gestures with that finger count.
-
-Opening the [Overview](./Overview.md) returns the desktop to normal scale and ends the zoom session: closing the Overview comes back to the unzoomed desktop, and zoom actions are ignored while the Overview is open.
-An in-progress `zoom hold=true` or `zoom-lock hold=true` hold is dropped without restoring its remembered view.
-The lock screen is shown unzoomed; the stored zoom is restored when you unlock.
-Viewport following is also suspended while the screenshot UI or the window switcher is open.
-Lowering [`max-zoom`](./Configuration:-Miscellaneous.md#max-zoom) in the config clamps the zoom level of every output right away, including locked outputs.
-
-Monitor screenshots and monitor screencasts include desktop zoom.
-Window-only screenshots and window casts capture the window unzoomed.
-
-The `zoom` config section also has a [`debug` subsection](./Configuration:-Miscellaneous.md#debug) that can draw the deadzone and the focal point on screen for local tuning.
+Monitor screenshots and monitor screencasts include zoom; window-only captures do not. The screenshot editor's magnifier is a separate feature.
 
 As an alternative, you can use third-party utilities like [wooz](https://github.com/negrel/wooz).

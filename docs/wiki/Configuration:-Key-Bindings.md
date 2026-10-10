@@ -500,31 +500,20 @@ binds {
 
 <sup>Since: next release</sup>
 
-Actions for desktop zoom, which magnifies the rendered desktop without changing the output scale.
-See the [Accessibility](./Accessibility.md#desktop-zoom) page for an overview and the [`zoom` config section](./Configuration:-Miscellaneous.md#zoom_1) for the settings.
+Desktop zoom magnifies the rendered desktop without changing the output scale.
+See [Zoom configuration](./Configuration:-Zoom.md) for settings, actions and examples.
 
 ```kdl
 binds {
-    Mod+Z { zoom 2.0; }
-    Mod+X { zoom 2.0 hold=true; }
+    Mod+Z repeat=false { zoom 2.0; }
+    Mod+X repeat=false { zoom 3.0 hold=true; }
     Mod+0 { reset-zoom; }
-
-    // Mouse wheel zooming works too.
-    // Mod+WheelScrollUp { zoom-in; }
-    // Mod+WheelScrollDown { zoom-out; }
+    Mod+WheelScrollUp { zoom-in; }
+    Mod+WheelScrollDown { zoom-out; }
+    Mod+L repeat=false { zoom-lock; }
 }
 ```
 
-Zoom actions apply to the output under the pointer, or to the focused output when the pointer is not on any output.
-They are ignored while the [Overview](./Overview.md) is open, since opening it ends the zoom session.
-
-- `zoom-in`: multiplies the target zoom level by [`increment-factor`](./Configuration:-Miscellaneous.md#increment-factor), clamped between 1× and `max-zoom`.
-- `zoom-out`: divides the target zoom level by `increment-factor`, ending at exactly 1×.
-- `set-zoom-level <LEVEL>`: sets the target zoom level to `LEVEL`, which must be at least `1`. Values above `max-zoom` are clamped to it.
-- `reset-zoom`: returns the target zoom level to 1×.
-- `zoom-lock`: toggles the zoom lock. While locked, the zoomed viewport no longer follows the pointer. `zoom-in` and `zoom-out` capture the pointer as their fixed anchor on each command; absolute level changes keep the content at the viewport center centered. `zoom <LEVEL> lock=true` activation also anchors on the pointer. `zoom-lock hold=true` inverts the lock only while the trigger is held: pressing locks an unlocked viewport or unlocks a locked one, and releasing restores the previous state.
-- `zoom <LEVEL>`: if the current target zoom level is above 1×, returns it to 1×; otherwise zooms to `LEVEL`. `LEVEL` must be greater than `1` and is clamped to `max-zoom`. It is the preset used when entering zoom, not a permanent fixed target. `zoom <LEVEL> lock=true` zooms in around the pointer and locks the viewport immediately, keeping the point under the pointer visually anchored during the zoom-in; toggling back to 1× unlocks it. `zoom <LEVEL> hold=true` makes it a momentary zoom: pressing the trigger remembers the current zoom view and temporarily zooms to `LEVEL`; releasing the same trigger restores the previous view, not simply 1×. `zoom <LEVEL> hold=true lock=true` also locks the viewport during the hold—pointer-anchored like the toggle—and restores the previous lock state on release.
-
-`zoom` with `hold=true` and `zoom-lock hold=true` are bind-only: they are not available through `niri msg action`, since their semantics depend on the physical press and release.
-The IPC `zoom` action accepts only `level` and `lock`.
-The trigger must have a release event, so scroll binds cannot be used for `zoom hold=true` or `zoom-lock hold=true`.
+Actions target the output under the pointer, falling back to the focused output.
+Opening Overview ends the zoom session; zoom actions are ignored while it owns the camera.
+`zoom hold=true` and `zoom-lock hold=true` require a physical release, so they are bind-only and cannot use wheel triggers. See [Hold and restore](./Configuration:-Zoom.md#hold-and-restore).

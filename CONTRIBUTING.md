@@ -12,11 +12,11 @@ This is a good way to help many new and existing users without programming knowl
 - Answer and help people in GitHub issues and discussions.
 - Check and point out duplicate issues.
 - Check for issues that are likely application bugs (and not niri bugs).
-    - Ask or try to reproduce on another non-Smithay-based compositor (sway, KDE/KWin, GNOME/Mutter). If the issue reproduces, it's likely an application bug.
-    - Ask or try to reproduce on another *Smithay-based* compositor ([cosmic-comp], [anvil]). If the issue reproduces only on Smithay compositors, it may be a Smithay bug.
-    - Make sure you're testing the Wayland version of the app on all compositors. Apps may silently use X11 when an X11 `$DISPLAY` is available.
-    - Problems with X11 apps should be reported to [xwayland-satellite]. When testing xwayland-satellite on different compositors, make sure you use xwayland-satellite's `$DISPLAY` (rather than another compositor's built-in Xwayland `$DISPLAY`).
-    - After testing, mention where you could and couldn't reproduce, as well as the exact steps to reproduce if the issue is missing them.
+  - Ask or try to reproduce on another non-Smithay-based compositor (sway, KDE/KWin, GNOME/Mutter). If the issue reproduces, it's likely an application bug.
+  - Ask or try to reproduce on another _Smithay-based_ compositor ([cosmic-comp], [anvil]). If the issue reproduces only on Smithay compositors, it may be a Smithay bug.
+  - Make sure you're testing the Wayland version of the app on all compositors. Apps may silently use X11 when an X11 `$DISPLAY` is available.
+  - Problems with X11 apps should be reported to [xwayland-satellite]. When testing xwayland-satellite on different compositors, make sure you use xwayland-satellite's `$DISPLAY` (rather than another compositor's built-in Xwayland `$DISPLAY`).
+  - After testing, mention where you could and couldn't reproduce, as well as the exact steps to reproduce if the issue is missing them.
 - Try to reproduce the issue on your own system and write if you could or couldn't reproduce it.
 - Upvote issues with a thumbs up reaction as you like.
 - Ideas and feature requests from new users should go to Discussions.
@@ -61,7 +61,7 @@ Pick a pull request, then review its code.
 - Check that everything looks good, check various conditions for edge cases.
 - See if there are any scenarios the author forgot to handle.
 - Check that the code fits well into the rest of niri, follows its design and code style.
-    - I understand this is vague. The idea is: look at the surrounding code and at similar modules (e.g. when implementing a new protocol, check other protocol implementations), and try to follow the style and structure.
+  - I understand this is vague. The idea is: look at the surrounding code and at similar modules (e.g. when implementing a new protocol, check other protocol implementations), and try to follow the style and structure.
 - Check for unrelated changes that may be better split into their own pull request.
 - Check that the wiki had been updated if necessary (for example, new config options were documented with examples, and have a correct Since annotation).
 
@@ -80,11 +80,11 @@ When creating pull requests, please keep the following in mind.
 - Make sure new features align with niri's design directions. Ideally, there should be an existing issue or discussion where we settled on that solution.
 - Keep pull requests focused on a single feature or bug fix with no unrelated changes.
 - Try to split your changes into small, self-contained commits. Every commit should build and pass tests. This makes it much easier to review your PR, and bisect for regressions in the future.
-    - When addressing PR comments, try to squash the changes straight into the relevant commits.
-    - In some cases when the requested changes are big/unclear, you can leave them as separate commits on top, but please squash and otherwise clean up the history when the changes are finalized.
-    - To update the main branch, please rebase instead of merging. Try to force-push the main update rebase separately from other changes, this way it's easy to skip during review since it's usually not interesting.
-    - When working on bigger features, I usually start with a big messy commit, then gradually split out smaller self-contained changes from it as the code gets into shape.
-    - [git-rebase.io](https://git-rebase.io/) is a helpful guide for splitting commits and cleaning up history in git.
+  - When addressing PR comments, try to squash the changes straight into the relevant commits.
+  - In some cases when the requested changes are big/unclear, you can leave them as separate commits on top, but please squash and otherwise clean up the history when the changes are finalized.
+  - To update the main branch, please rebase instead of merging. Try to force-push the main update rebase separately from other changes, this way it's easy to skip during review since it's usually not interesting.
+  - When working on bigger features, I usually start with a big messy commit, then gradually split out smaller self-contained changes from it as the code gets into shape.
+  - [git-rebase.io](https://git-rebase.io/) is a helpful guide for splitting commits and cleaning up history in git.
 - When you address a review comment, mark it as resolved.
 - Remember to [run tests](https://niri-wm.github.io/niri/Development:-Developing-niri#tests) and format the code with `cargo +nightly fmt --all`.
 - For new layout actions, remember to add them to the randomized tests. For weird Wayland handling, adding client-server tests in `src/tests/` could be very useful.
@@ -102,14 +102,13 @@ When creating pull requests, please keep the following in mind.
 
 ## AI contributions
 
-If you use LLMs for your contribution (issue, comment, pull request), then it is *your job* to check and clean up its output, just like with any other tool.
-*You* have to spend the time doing this.
+If you use LLMs for your contribution (issue, comment, pull request), then it is _your job_ to check and clean up its output, just like with any other tool.
+_You_ have to spend the time doing this.
 Particularly:
 
-- If I can tell that a pull request is mostly LLM-generated, then very likely this pull request will take *significantly more time and effort* than usual to review and finish. This is based on my prior review experience. Therefore, I'm not interested in such pull requests—there's always plenty of human-written ones which take priority.
+- If I can tell that a pull request is mostly LLM-generated, then very likely this pull request will take _significantly more time and effort_ than usual to review and finish. This is based on my prior review experience. Therefore, I'm not interested in such pull requests—there's always plenty of human-written ones which take priority.
 - When using an LLM to prepare an issue, the text usually has a lot of unnecessary wording and irrelevant details. Anyone looking at such an issue will quickly lose interest in reading through it (myself certainly). Clean up the text and keep only those details that actually matter.
-- When using an LLM to comment on an issue, *you* have to verify that the comment makes sense, contributes something useful, and doesn't have unnecessary repetition.
-
+- When using an LLM to comment on an issue, _you_ have to verify that the comment makes sense, contributes something useful, and doesn't have unnecessary repetition.
 
 [cosmic-comp]: https://github.com/pop-os/cosmic-comp
 [anvil]: https://github.com/Smithay/smithay/tree/master/anvil

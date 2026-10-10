@@ -28,6 +28,7 @@
 * [Outputs](./Configuration:-Outputs.md)
 * [Key Bindings](./Configuration:-Key-Bindings.md)
 * [Screenshot](./Configuration:-Screenshot.md)
+* [Zoom](./Configuration:-Zoom.md)
 * [Switch Events](./Configuration:-Switch-Events.md)
 * [Layout](./Configuration:-Layout.md)
 * [Knitted Border Tuning](./Knitted-Border-Tuning.md)

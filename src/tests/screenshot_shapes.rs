@@ -543,9 +543,10 @@ fn shapes_and_guides_preserve_frozen_coordinates_across_scale_and_rotation() {
 
 #[test]
 fn axes_holds_end_on_device_removal_without_changing_toggle() {
+    use smithay::backend::input::InputEvent;
+
     use crate::tests::test_input_backend::{TestInputBackend, TestInputDevice};
     use crate::ui::screenshot_axes::HoldButton;
-    use smithay::backend::input::InputEvent;
 
     let mut f = set_up(CONFIG);
     let output = f.niri_output(1);

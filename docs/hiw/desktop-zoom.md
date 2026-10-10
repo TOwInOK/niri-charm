@@ -2,7 +2,7 @@
 
 Developer guide for contributors and coding agents. This describes the current implementation, not the original proposal. Read it before changing zoom ownership, input mapping, or Overview integration; update it alongside changes to those contracts.
 
-User controls are documented in [Accessibility](../wiki/Accessibility.md) and [key bindings](../wiki/Configuration:-Key-Bindings.md#zoom).
+User controls, configuration and visual demonstrations are documented in [Zoom configuration](../wiki/Configuration:-Zoom.md).
 
 ## Source map and ownership
 
